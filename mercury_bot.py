@@ -275,7 +275,8 @@ async def monitor_loop():
     # Channel 3 — grab content of first 5 pastes, combine, send as .txt
     try:
         content_channel = bot.get_channel(CONTENT_CHANNEL_ID) or await bot.fetch_channel(CONTENT_CHANNEL_ID)
-        await post_combined_content(content_channel, pastes)
+        new_content_pastes = [p for p in pastes if p["url"] not in posted_urls]
+        await post_combined_content(content_channel, new_content_pastes)
     except Exception as e:
         log.error(f"Could not post to content channel: {e}")
 
