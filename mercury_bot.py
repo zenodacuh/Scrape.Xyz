@@ -9,9 +9,6 @@ import logging
 import os
 from datetime import datetime, timezone
 
-import re
-import unicodedata
-import aiohttp
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -22,9 +19,6 @@ DISCORD_TOKEN      = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID         = int(os.environ["CHANNEL_ID"])          # all found URLs as .txt every minute
 NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])      # new URL alerts only
 CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"]) # extracted credentials from new pastes
-
-TELEGRAM_TOKEN  = os.environ["TELEGRAM_TOKEN"]   # bot token from @BotFather
-TELEGRAM_CHAT   = os.environ["TELEGRAM_CHAT"]    # channel like @mychannel or -100xxxxxxxx
 
 CHECK_INTERVAL = 1
 PAGES_TO_SCAN  = 5
@@ -42,60 +36,15 @@ log = logging.getLogger("mercury")
 posted_urls: set = set()
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
-EMOJI_RE = re.compile(
-    "["
-    u"\U0001F600-\U0001F64F"
-    u"\U0001F300-\U0001F5FF"
-    u"\U0001F680-\U0001F9FF"
-    u"\U00002600-\U000027BF"
-    u"\U0001FA00-\U0001FA6F"
-    u"\U0001FA70-\U0001FAFF"
-    u"\U00002702-\U000027B0"
-    "]+", flags=re.UNICODE
-)
-
-TELEGRAM_DOMAINS = ("t.me", "telegram.me", "telegram.dog")
-
-def is_junk_line(line: str) -> bool:
-    if "|" in line:
-        return True
-    if any(d in line.lower() for d in TELEGRAM_DOMAINS):
-        return True
-    if EMOJI_RE.search(line):
-        return True
-    return False
-
 def extract_credentials(raw: str) -> list[str]:
     lines = []
     for line in raw.splitlines():
         line = line.strip()
-        if not line:
-            continue
-        if is_junk_line(line):
-            continue
         if "@" in line and ":" in line:
             parts = line.split(":", 1)
             if len(parts) == 2 and "@" in parts[0] and "." in parts[0]:
                 lines.append(line)
     return lines
-
-
-async def send_telegram_file(text: str, filename: str):
-    """Send a .txt file to a Telegram channel via Bot API."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    data = aiohttp.FormData()
-    data.add_field("chat_id", TELEGRAM_CHAT)
-    data.add_field("document", text.encode(), filename=filename, content_type="text/plain")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    log.error(f"Telegram API error {resp.status}: {body}")
-                else:
-                    log.info("Posted to Telegram")
-    except Exception as e:
-        log.error(f"Failed to send to Telegram: {e}")
 
 # ─── BOT ─────────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -287,7 +236,6 @@ async def monitor_loop():
                     filename = f"content_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
                     await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
                     log.info("Posted combined content file")
-                    await send_telegram_file(output, filename)
                 else:
                     log.info("Nothing to post to content channel")
 
