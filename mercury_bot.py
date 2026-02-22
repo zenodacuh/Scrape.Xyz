@@ -129,6 +129,16 @@ async def post_pastes(channel, pastes: list[dict]):
         log.error(f"Failed to post file: {e}")
 
 
+async def post_new_alerts(channel, pastes: list[dict]):
+    """Post individual alert messages for new channel."""
+    for item in pastes:
+        try:
+            await channel.send(f"= DETECTED {1} NEW URL =\n{item['url']}")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            log.error(f"Failed to post alert: {e}")
+
+
 # ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
 @tasks.loop(minutes=CHECK_INTERVAL)
 async def monitor_loop():
@@ -149,7 +159,7 @@ async def monitor_loop():
         new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
         new_pastes = [p for p in pastes if p["url"] not in posted_urls]
         if new_pastes:
-            await post_pastes(new_channel, new_pastes)
+            await post_new_alerts(new_channel, new_pastes)
             for p in new_pastes:
                 posted_urls.add(p["url"])
             log.info(f"Posted {len(new_pastes)} new link(s) to new channel")
