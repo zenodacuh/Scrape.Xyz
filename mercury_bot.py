@@ -17,7 +17,8 @@ from playwright.async_api import async_playwright
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 DISCORD_TOKEN  = os.environ["DISCORD_TOKEN"]
-CHANNEL_ID     = int(os.environ["CHANNEL_ID"])
+CHANNEL_ID     = int(os.environ["CHANNEL_ID"])      # posts everything every minute
+NEW_CHANNEL_ID = int(os.environ["NEW_CHANNEL_ID"])  # posts only new (never-seen) links
 
 CHECK_INTERVAL = 1
 PAGES_TO_SCAN  = 5
@@ -31,6 +32,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("mercury")
 
+
+# ─── SEEN URLS (in-memory, tracks what NEW_CHANNEL has already received) ───────
+posted_urls: set = set()
 
 # ─── SCRAPER ─────────────────────────────────────────────────────────────────
 async def scrape_pasteview(num_pages: int = PAGES_TO_SCAN) -> list[dict]:
@@ -136,7 +140,21 @@ async def monitor_loop():
 
     log.info("Running scheduled check...")
     pastes = await scrape_pasteview(PAGES_TO_SCAN)
+
+    # Channel 1 — post everything every run
     await post_pastes(channel, pastes)
+
+    # Channel 2 — post only links never seen before
+    try:
+        new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
+        new_pastes = [p for p in pastes if p["url"] not in posted_urls]
+        if new_pastes:
+            await post_pastes(new_channel, new_pastes)
+            for p in new_pastes:
+                posted_urls.add(p["url"])
+            log.info(f"Posted {len(new_pastes)} new link(s) to new channel")
+    except Exception as e:
+        log.error(f"Could not post to new channel: {e}")
 
 
 @monitor_loop.before_loop
