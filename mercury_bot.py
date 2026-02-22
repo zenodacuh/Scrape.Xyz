@@ -11,6 +11,7 @@ import re
 from datetime import datetime, timezone
 
 import re
+import random
 import aiohttp
 import discord
 from discord.ext import commands, tasks
@@ -94,6 +95,16 @@ async def send_telegram_file(text: str, filename: str):
                     log.info("Posted to Telegram")
     except Exception as e:
         log.error(f"Failed to send to Telegram: {e}")
+
+
+async def send_telegram_message(text: str):
+    """Send a plain text message to Telegram channel."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(url, json={"chat_id": TELEGRAM_CHAT, "text": text})
+    except Exception as e:
+        log.error(f"Failed to send Telegram message: {e}")
 
 
 # ─── BOT ─────────────────────────────────────────────────────────────────────
@@ -290,15 +301,20 @@ async def monitor_loop():
                         "https://t.me/+5Bqqamk3cpcxNDA0\n"
                         "\n"
                     )
-                    creds_only = "\n\n".join(
-                        "\n".join(
-                            line for line in block.splitlines()
-                            if not line.startswith("#")
-                        )
-                        for block in combined
-                    )
-                    tg_output = tg_header + creds_only
+                    all_creds = []
+                    for block in combined:
+                        for line in block.splitlines():
+                            if not line.startswith("#") and line.strip():
+                                all_creds.append(line)
+                    random.shuffle(all_creds)
+                    tg_output = tg_header + "\n".join(all_creds)
                     await send_telegram_file(tg_output, filename)
+                    tg_caption = (
+                        f"{len(all_creds)} COMBO FILE\n"
+                        "            BUY MERCURY VIP AT @xn9bowner\n"
+                        "            10 LIFETIME 5 MONTHLY"
+                    )
+                    await send_telegram_message(tg_caption)
                 else:
                     log.info("Nothing to post to content channel")
 
