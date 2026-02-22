@@ -260,25 +260,28 @@ async def monitor_loop():
     # Channel 1 — post all found URLs as .txt
     await post_pastes(channel, pastes)
 
+    # Compute new pastes once — used by both channel 2 and channel 3
+    new_pastes = [p for p in pastes if p["url"] not in posted_urls]
+
     # Channel 2 — post only new (never-seen) URLs as alerts
     try:
         new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
-        new_pastes = [p for p in pastes if p["url"] not in posted_urls]
         if new_pastes:
             await post_new_alerts(new_channel, new_pastes)
-            for p in new_pastes:
-                posted_urls.add(p["url"])
             log.info(f"Posted {len(new_pastes)} new link(s) to new channel")
     except Exception as e:
         log.error(f"Could not post to new channel: {e}")
 
-    # Channel 3 — grab content of first 5 pastes, combine, send as .txt
+    # Channel 3 — grab content of first 5 new pastes, combine, send as .txt
     try:
         content_channel = bot.get_channel(CONTENT_CHANNEL_ID) or await bot.fetch_channel(CONTENT_CHANNEL_ID)
-        new_content_pastes = [p for p in pastes if p["url"] not in posted_urls]
-        await post_combined_content(content_channel, new_content_pastes)
+        await post_combined_content(content_channel, new_pastes)
     except Exception as e:
         log.error(f"Could not post to content channel: {e}")
+
+    # Mark all new pastes as seen AFTER both channels are done
+    for p in new_pastes:
+        posted_urls.add(p["url"])
 
 
 @monitor_loop.before_loop
