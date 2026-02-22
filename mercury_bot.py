@@ -287,23 +287,7 @@ async def monitor_loop():
                     filename = f"content_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
                     await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
                     log.info("Posted combined content file")
-                    tg_header = (
-                        "WAR CLOUD PRIVATE HOTMAILS\n"
-                        "------------------------\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "\n"
-                    )
-                    creds_only = "\n\n".join(
-                        "\n".join(
-                            line for line in block.splitlines()
-                            if not line.startswith("#")
-                        )
-                        for block in combined
-                    )
-                    tg_output = tg_header + creds_only
-                    await send_telegram_file(tg_output, filename)
+                    await send_telegram_file(output, filename)
                 else:
                     log.info("Nothing to post to content channel")
 
