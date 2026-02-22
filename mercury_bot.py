@@ -150,11 +150,15 @@ async def monitor_loop():
             # ── Step 2: channel 1 — all found URLs as .txt ─────────────────
             await post_pastes(channel, pastes)
 
-            # ── Step 3: figure out which are new ──────────────────────────
+            # ── Step 3: figure out which are new & mark them seen NOW ───
             new_pastes = [p for p in pastes if p["url"] not in posted_urls]
             if not new_pastes:
                 log.info("No new pastes this run")
                 return
+
+            # Mark seen immediately so even if steps below crash, we don't repeat
+            for p in new_pastes:
+                posted_urls.add(p["url"])
 
             log.info(f"{len(new_pastes)} new paste(s) detected")
 
@@ -237,10 +241,6 @@ async def monitor_loop():
 
             except Exception as e:
                 log.error(f"Could not post to content channel: {e}")
-
-            # ── Step 6: mark new pastes as seen ───────────────────────────
-            for p in new_pastes:
-                posted_urls.add(p["url"])
 
         except Exception as e:
             log.error(f"Monitor loop error: {e}")
