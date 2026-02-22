@@ -218,7 +218,7 @@ async def monitor_loop():
                         if raw and raw.strip():
                             creds = extract_credentials(raw)
                             if creds:
-                                combined.append(f"# {item['title']}\n# {url}\n" + "\n".join(creds))
+                                combined.append("\n".join(creds))
                                 log.info(f"Got {len(creds)} credential lines from {url}")
                             else:
                                 log.info(f"No credential lines in {url}")
@@ -254,10 +254,10 @@ async def before_monitor():
 @tree.command(name="scrape", description="Manually trigger a scrape right now")
 @app_commands.describe(pages="Number of archive pages to scan (default: 5)")
 async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCAN):
-    await interaction.response.send_message(f"🔴 Scanning {pages} page(s)...", ephemeral=True)
+    await interaction.response.send_message(f"Scanning {pages} page(s)...", ephemeral=True)
     channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
     await monitor_loop()
-    await interaction.followup.send("✅ Done.", ephemeral=True)
+    await interaction.followup.send("Done.", ephemeral=True)
 
 
 # ─── EVENTS ──────────────────────────────────────────────────────────────────
