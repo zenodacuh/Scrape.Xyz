@@ -26,7 +26,6 @@ CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"]) # extracted credentia
 
 TELEGRAM_TOKEN       = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]         # public channel (every 5th line)
-TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]  # private channel (all combos)
 
 CHECK_INTERVAL = 1
 PAGES_TO_SCAN  = 5
@@ -322,24 +321,6 @@ async def monitor_loop():
 
                     # TELEGRAM_PUBLIC_CHAT = public channel — every 5th PASTE only
                     # paste_index tracks which paste number we are on globally this run
-                    # every 5th paste block goes to public
-                    public_blocks = combined[::5]
-                    if public_blocks:
-                        public_creds_flat = []
-                        for block in public_blocks:
-                            for line in block.splitlines():
-                                if line.strip():
-                                    public_creds_flat.append(line)
-                        random.shuffle(public_creds_flat)
-                        pub_output = tg_header + "\n".join(public_creds_flat)
-                        pub_filename = f"public_{filename}"
-                        await send_telegram_file(pub_output, pub_filename, chat_id=TELEGRAM_PUBLIC_CHAT)
-                        pub_caption = (
-                            f"{len(public_creds_flat)} COMBO FILE\n"
-                            "            BUY MERCURY VIP AT @xn9bowner\n"
-                            "            10 LIFETIME 5 MONTHLY"
-                        )
-                        await send_telegram_message(pub_caption, chat_id=TELEGRAM_PUBLIC_CHAT)
 
                 else:
                     log.info("Nothing to post to content channel")
