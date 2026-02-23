@@ -291,7 +291,7 @@ async def monitor_loop():
 
                 if combined:
                     output = "\n\n".join(combined)
-                    filename = f"content_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
+                    filename = "HOTMAIL.txt"
                     await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
                     log.info("Posted combined content file")
                     tg_header = (
@@ -312,12 +312,7 @@ async def monitor_loop():
 
                     # TELEGRAM_CHAT = private channel — gets ALL combos
                     await send_telegram_file(tg_output, filename, chat_id=TELEGRAM_CHAT)
-                    tg_caption = (
-                        f"{len(all_creds)} COMBO FILE\n"
-                        "            BUY MERCURY VIP AT @xn9bowner\n"
-                        "            10 LIFETIME 5 MONTHLY"
-                    )
-                    await send_telegram_message(tg_caption, chat_id=TELEGRAM_CHAT)
+
 
                     # TELEGRAM_PUBLIC_CHAT = public channel — every 5th PASTE only
                     # paste_index tracks which paste number we are on globally this run
