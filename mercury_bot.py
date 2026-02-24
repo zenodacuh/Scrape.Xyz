@@ -237,8 +237,17 @@ async def monitor_loop():
 
         try:
             # ── Step 1: scrape archive ─────────────────────────────────────
-            await page.goto(ARCHIVE_URL, wait_until="networkidle", timeout=20000)
-            await page.wait_for_timeout(2000)
+            for attempt in range(3):
+                try:
+                    await page.goto(ARCHIVE_URL, wait_until="networkidle", timeout=30000)
+                    await page.wait_for_timeout(2000)
+                    break
+                except Exception as e:
+                    log.warning(f"Archive load attempt {attempt+1} failed: {e}")
+                    if attempt == 2:
+                        log.error("Archive failed to load after 3 attempts, skipping scan")
+                        return
+                    await asyncio.sleep(3)
 
             found = []
             for page_num in range(1, PAGES_TO_SCAN + 1):
