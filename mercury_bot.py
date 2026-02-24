@@ -28,7 +28,7 @@ CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"])
 TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
 
-CHECK_INTERVAL = 1
+CHECK_INTERVAL = 30
 PAGES_TO_SCAN  = 5
 ARCHIVE_URL    = "https://pasteview.com/paste-archive"
 SEEN_FILE      = "seen_urls.json"
@@ -217,7 +217,7 @@ async def extract_raw(page, url: str) -> str:
 
 
 # ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
-@tasks.loop(minutes=CHECK_INTERVAL)
+@tasks.loop(seconds=CHECK_INTERVAL)
 async def monitor_loop():
     try:
         channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
@@ -338,17 +338,29 @@ async def monitor_loop():
 
                 if combined:
                     output = "\n\n".join(combined)
-                    filename = f"content_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
+                    ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+
+                    # Determine filename based on matched keyword in any new paste title
+                    title_lower = " ".join(p["title"].lower() for p in new_pastes)
+                    if "hotmail" in title_lower:
+                        label = "hotmail"
+                    elif "hits" in title_lower:
+                        label = "hits"
+                    elif "mix" in title_lower or "mixed" in title_lower:
+                        label = "mix"
+                    else:
+                        label = "content"
+                    filename = f"{label}_{ts}.txt"
 
                     # Discord
                     await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
-                    log.info("Posted to Discord content channel")
+                    log.info(f"Posted to Discord content channel as {filename}")
 
                     # Telegram — shuffle + header
                     all_creds = [line for block in combined for line in block.splitlines() if line.strip()]
                     random.shuffle(all_creds)
                     tg_header = (
-                        "WAR CLOUD PRIVATE HOTMAILS\n"
+                        f"WAR CLOUD PRIVATE {label.upper()}\n"
                         "------------------------\n"
                         "https://t.me/+5Bqqamk3cpcxNDA0\n"
                         "https://t.me/+5Bqqamk3cpcxNDA0\n"
@@ -397,7 +409,7 @@ async def cmd_stats(interaction: discord.Interaction):
     embed.add_field(name="Pastes Found",  value=str(stats["total_pastes"]),   inline=True)
     embed.add_field(name="Combos Found",  value=str(stats["total_combos"]),   inline=True)
     embed.add_field(name="URLs Tracked",  value=str(len(posted_urls)),        inline=True)
-    embed.add_field(name="Check Every",   value=f"{CHECK_INTERVAL} min",      inline=True)
+    embed.add_field(name="Check Every",   value=f"{CHECK_INTERVAL}s",         inline=True)
     await interaction.response.send_message(embed=embed)
 
 
@@ -411,7 +423,7 @@ async def on_ready():
     except Exception as e:
         log.error(f"Failed to sync commands: {e}")
     monitor_loop.start()
-    log.info(f"Monitor started — checking every {CHECK_INTERVAL} minute(s)")
+    log.info(f"Monitor started — checking every {CHECK_INTERVAL} second(s)")
 
 
 # ─── RUN ─────────────────────────────────────────────────────────────────────
