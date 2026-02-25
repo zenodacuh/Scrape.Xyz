@@ -165,7 +165,7 @@ async def extract_raw(page, url: str) -> str:
     """Extract raw text from a paste URL with retries."""
     for attempt in range(2):
         try:
-            await page.goto(url, wait_until="networkidle", timeout=15000)
+            await page.goto(url, wait_until="networkidle", timeout=0)
             await page.wait_for_timeout(1500)
 
             # Ace editor API
