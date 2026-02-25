@@ -49,6 +49,7 @@ log = logging.getLogger("mercury")
 # ─── STATE ───────────────────────────────────────────────────────────────────
 start_time = time.time()
 stats = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
+scan_lock = asyncio.Lock()
 
 def load_seen() -> set:
     if Path(SEEN_FILE).exists():
@@ -228,8 +229,13 @@ async def monitor_loop():
         log.error(f"Could not get channel: {e}")
         return
 
-    stats["scans"] += 1
-    log.info(f"Running scan #{stats['scans']}...")
+    if scan_lock.locked():
+        log.info("Scan already in progress, skipping this cycle")
+        return
+
+    async with scan_lock:
+        stats["scans"] += 1
+        log.info(f"Running scan #{stats['scans']}...")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -451,8 +457,19 @@ async def on_ready():
         log.info(f"Synced {len(synced)} slash command(s)")
     except Exception as e:
         log.error(f"Failed to sync commands: {e}")
-    monitor_loop.start()
-    log.info(f"Monitor started — checking every {CHECK_INTERVAL} second(s)")
+    if not monitor_loop.is_running():
+        monitor_loop.start()
+        log.info(f"Monitor started — checking every {CHECK_INTERVAL} second(s)")
+    else:
+        log.info("Monitor already running after reconnect")
+
+
+@bot.event
+async def on_resumed():
+    log.info("Discord session resumed")
+    if not monitor_loop.is_running():
+        monitor_loop.start()
+        log.info("Monitor restarted after resume")
 
 
 # ─── RUN ─────────────────────────────────────────────────────────────────────
