@@ -28,6 +28,9 @@ CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"])
 TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
 
+OWNER_ID = int(os.environ["OWNER_ID"])  # your Discord user ID
+EMPTY_SCAN_ALERT = 10  # DM after this many consecutive empty scans
+
 CHECK_INTERVAL = 30
 PAGES_TO_SCAN  = 5
 ARCHIVE_URL    = "https://pasteview.com/paste-archive"
@@ -45,7 +48,7 @@ log = logging.getLogger("mercury")
 
 # ─── STATE ───────────────────────────────────────────────────────────────────
 start_time = time.time()
-stats = {"total_pastes": 0, "total_combos": 0, "scans": 0}
+stats = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
 
 def load_seen() -> set:
     if Path(SEEN_FILE).exists():
@@ -309,8 +312,17 @@ async def monitor_loop():
             # ── Step 3: find new pastes & mark seen immediately ───────────
             new_pastes = [p for p in pastes if p["url"] not in posted_urls]
             if not new_pastes:
-                log.info("No new pastes this run")
+                stats["empty_scans"] += 1
+                log.info(f"No new pastes this run (empty streak: {stats['empty_scans']})")
+                if stats["empty_scans"] == EMPTY_SCAN_ALERT:
+                    try:
+                        owner = await bot.fetch_user(OWNER_ID)
+                        await owner.send(f"⚠️ MERCURY: No new pastes found in {EMPTY_SCAN_ALERT} consecutive scans. Something might be broken.")
+                    except Exception as e:
+                        log.error(f"Failed to DM owner: {e}")
                 return
+
+            stats["empty_scans"] = 0
 
             for p in new_pastes:
                 posted_urls.add(p["url"])
@@ -364,6 +376,14 @@ async def monitor_loop():
                     # Discord
                     await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
                     log.info(f"Posted to Discord content channel as {filename}")
+
+                    # DM owner
+                    try:
+                        owner = await bot.fetch_user(OWNER_ID)
+                        total = sum(len(block.splitlines()) for block in combined)
+                        await owner.send(f"✅ New {label.upper()} detected — {total} combos")
+                    except Exception as e:
+                        log.error(f"Failed to DM owner: {e}")
 
                     # Telegram — shuffle + header
                     all_creds = [line for block in combined for line in block.splitlines() if line.strip()]
