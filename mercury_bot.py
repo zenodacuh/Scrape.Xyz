@@ -29,8 +29,8 @@ TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
-CHECK_INTERVAL   = 30
-PAGES_TO_SCAN    = 5
+CHECK_INTERVAL   = 10
+PAGES_TO_SCAN    = 10
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
 EMPTY_SCAN_ALERT = 10
@@ -80,7 +80,7 @@ EMOJI_RE = re.compile(
     "]+", flags=re.UNICODE
 )
 
-JUNK_DOMAINS   = ("t.me", "telegram.me", "telegram.dog", "discord.gg", "http://", "https://")
+JUNK_DOMAINS   = ("t.me", "telegram.me", "telegram.dog", "discord.gg", "http://", "https://", "lowza")
 VALID_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 def is_valid_combo(line: str) -> bool:
