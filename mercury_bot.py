@@ -35,6 +35,7 @@ ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
 EMPTY_SCAN_ALERT = 10
 KEYWORDS         = ["hotmail", "hits", "mixed", "mix", "untitled"]
+BLACKLIST        = ["omegle", "teens", "bro", "sis", "sister", "brother", "incest", "minor", "underage"]
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -80,7 +81,7 @@ EMOJI_RE = re.compile(
     "]+", flags=re.UNICODE
 )
 
-JUNK_DOMAINS   = ("t.me", "telegram.me", "telegram.dog", "discord.gg", "http://", "https://", "lowza")
+JUNK_DOMAINS   = ("t.me", "telegram.me", "telegram.dog", "discord.gg", "http://", "https://")
 VALID_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 def is_valid_combo(line: str) -> bool:
@@ -287,13 +288,18 @@ async def monitor_loop():
                     log.info(f"Page {page_num}: {len(matches)} match(es)")
                     found.extend(matches)
 
-                # Deduplicate within this run
+                # Deduplicate and filter blacklisted titles
                 seen_this_run = set()
                 pastes        = []
                 for item in found:
-                    if item["url"] not in seen_this_run:
-                        seen_this_run.add(item["url"])
-                        pastes.append(item)
+                    if item["url"] in seen_this_run:
+                        continue
+                    title_lower = item["title"].lower()
+                    if any(b in title_lower for b in BLACKLIST):
+                        log.info(f"Skipping blacklisted paste: {item['title']}")
+                        continue
+                    seen_this_run.add(item["url"])
+                    pastes.append(item)
 
                 stats["total_pastes"] += len(pastes)
 
