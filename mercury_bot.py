@@ -29,12 +29,14 @@ TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
-CHECK_INTERVAL   = 10
-PAGES_TO_SCAN    = 10
+PASTEVIEW_USERNAME = os.environ["PASTEVIEW_USERNAME"]
+PASTEVIEW_PASSWORD = os.environ["PASTEVIEW_PASSWORD"]
+CHECK_INTERVAL   = 30
+PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
 EMPTY_SCAN_ALERT = 10
-KEYWORDS         = ["hotmail", "hits", "mixed", "mix", "untitled"]
+KEYWORDS         = ["hotmail", "hits", "mixed"]
 BLACKLIST        = ["omegle", "teens", "bro", "sis", "sister", "brother", "incest", "minor", "underage"]
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
@@ -48,7 +50,9 @@ log = logging.getLogger("mercury")
 # ─── STATE ───────────────────────────────────────────────────────────────────
 start_time = time.time()
 stats      = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
-scan_lock  = asyncio.Lock()
+scan_lock        = asyncio.Lock()
+browser_context  = None   # reused across scans
+session_valid    = False  # tracks if we're logged in
 
 def load_seen() -> set:
     if Path(SEEN_FILE).exists():
@@ -205,6 +209,52 @@ async def extract_raw(page, url: str) -> str:
 
     return ""
 
+async def ensure_logged_in(playwright):
+    """Login to Pasteview once and reuse the browser context."""
+    global browser_context, session_valid
+
+    if browser_context and session_valid:
+        return browser_context
+
+    log.info("Logging in to Pasteview...")
+    browser = await playwright.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+    )
+    context = await browser.new_context()
+    page    = await context.new_page()
+
+    try:
+        await page.goto("https://profilable.com/login?redirect=pasteview", wait_until="networkidle", timeout=30000)
+        await page.wait_for_timeout(1500)
+
+        # Fill login form
+        await page.fill('input[name="username"], input[type="text"]', PASTEVIEW_USERNAME)
+        await page.fill('input[type="password"], input[name="password"]', PASTEVIEW_PASSWORD)
+        await page.click('button[type="submit"]')
+        await page.wait_for_timeout(5000)  # wait for Cloudflare verification
+
+        # Check if login succeeded — profilable redirects back to pasteview on success
+        url = page.url
+        if "pasteview.com" in url:
+            session_valid   = True
+            browser_context = context
+            log.info("Logged in to Pasteview successfully")
+        else:
+            log.error("Pasteview login failed — check credentials")
+            session_valid = False
+            await browser.close()
+            return None
+
+    except Exception as e:
+        log.error(f"Login error: {e}")
+        session_valid = False
+        await browser.close()
+        return None
+
+    return context
+
+
 # ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def monitor_loop():
@@ -223,11 +273,11 @@ async def monitor_loop():
         log.info(f"Running scan #{stats['scans']}...")
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
-            page = await browser.new_page()
+            context = await ensure_logged_in(p)
+            if not context:
+                log.error("Could not log in, skipping scan")
+                return
+            page = await context.new_page()
 
             try:
                 # ── Step 1: load archive ───────────────────────────────────
@@ -400,8 +450,9 @@ async def monitor_loop():
 
             except Exception as e:
                 log.error(f"Monitor loop error: {e}")
+                session_valid = False  # force re-login on next scan
             finally:
-                await browser.close()
+                await page.close()
 
 
 @monitor_loop.before_loop
