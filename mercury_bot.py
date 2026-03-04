@@ -29,12 +29,13 @@ TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
-CHECK_INTERVAL   = 10
-PAGES_TO_SCAN    = 10
+PASTEVIEW_API_KEY = os.environ["PASTEVIEW_API_KEY"]
+CHECK_INTERVAL   = 30
+PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
 EMPTY_SCAN_ALERT = 10
-KEYWORDS         = ["hotmail", "hits", "mixed", "mix", "untitled"]
+KEYWORDS         = ["hotmail", "hits", "mixed"]
 BLACKLIST        = ["omegle", "teens", "bro", "sis", "sister", "brother", "incest", "minor", "underage"]
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
@@ -205,6 +206,37 @@ async def extract_raw(page, url: str) -> str:
 
     return ""
 
+async def create_dummy_paste():
+    """Create a dummy paste to unlock archive viewing."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://pasteview.com/api/pastes",
+                headers={"x-api-key": PASTEVIEW_API_KEY},
+                json={
+                    "titleSection": {
+                        "title": "test",
+                        "color1": "#FFFFFF",
+                        "color2": "#0087BB",
+                        "color3": "#26E796",
+                        "color4": "#FF6E00",
+                        "color5": "#000000"
+                    },
+                    "content": "test",
+                    "syntax": "javascript",
+                    "status": "public",
+                    "expiration": "1d"
+                }
+            ) as resp:
+                if resp.status == 200:
+                    log.info("Dummy paste created, archive unlocked")
+                else:
+                    body = await resp.text()
+                    log.error(f"Failed to create dummy paste: {resp.status} {body}")
+    except Exception as e:
+        log.error(f"Dummy paste error: {e}")
+
+
 # ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def monitor_loop():
@@ -230,7 +262,10 @@ async def monitor_loop():
             page = await browser.new_page()
 
             try:
-                # ── Step 1: load archive ───────────────────────────────────
+                # ── Step 1: create dummy paste to unlock archive ──────────
+                await create_dummy_paste()
+
+                # ── Step 2: load archive ───────────────────────────────────
                 for attempt in range(3):
                     try:
                         await page.goto(ARCHIVE_URL, wait_until="networkidle", timeout=30000)
