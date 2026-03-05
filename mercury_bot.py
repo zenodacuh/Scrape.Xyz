@@ -1,6 +1,6 @@
 """
 MERCURY — Discord Bot
-Deploy on Railway.
+Scrapes Pasteview every 30 seconds, posts to 3 Discord channels + Telegram.
 """
 
 import asyncio
@@ -29,8 +29,6 @@ TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
-PASTEVIEW_USERNAME = os.environ["PASTEVIEW_USERNAME"]
-PASTEVIEW_PASSWORD = os.environ["PASTEVIEW_PASSWORD"]
 CHECK_INTERVAL   = 30
 PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
@@ -50,9 +48,7 @@ log = logging.getLogger("mercury")
 # ─── STATE ───────────────────────────────────────────────────────────────────
 start_time = time.time()
 stats      = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
-scan_lock        = asyncio.Lock()
-browser_context  = None   # reused across scans
-session_valid    = False  # tracks if we're logged in
+scan_lock  = asyncio.Lock()
 
 def load_seen() -> set:
     if Path(SEEN_FILE).exists():
@@ -84,34 +80,24 @@ EMOJI_RE = re.compile(
     u"\U00002702-\U000027B0"
     "]+", flags=re.UNICODE
 )
-
-JUNK_DOMAINS   = ("t.me", "telegram.me", "telegram.dog", "discord.gg", "http://", "https://")
+JUNK_DOMAINS   = ("t.me", "telegram.me", "discord.gg", "http://", "https://")
 VALID_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 def is_valid_combo(line: str) -> bool:
-    if not line or len(line) > 200:
+    if not line or len(line) > 200 or "|" in line:
         return False
-    if "|" in line:
-        return False
-    if EMOJI_RE.search(line):
-        return False
-    if any(d in line.lower() for d in JUNK_DOMAINS):
+    if EMOJI_RE.search(line) or any(d in line.lower() for d in JUNK_DOMAINS):
         return False
     if ":" not in line:
         return False
     parts = line.split(":", 1)
-    if len(parts) != 2:
-        return False
     email, password = parts[0].strip(), parts[1].strip()
     if not password or len(password) < 3:
         return False
-    if not VALID_EMAIL_RE.match(email):
-        return False
-    return True
+    return bool(VALID_EMAIL_RE.match(email))
 
 def extract_credentials(raw: str) -> list[str]:
-    seen = set()
-    lines = []
+    seen, lines = set(), []
     for line in raw.splitlines():
         line = line.strip()
         if line and is_valid_combo(line) and line not in seen:
@@ -170,26 +156,15 @@ async def extract_raw(page, url: str) -> str:
                     if (window.ace) {
                         const editors = document.querySelectorAll('.ace_editor');
                         for (let ed of editors) {
-                            try {
-                                const val = ace.edit(ed).getValue();
-                                if (val && val.trim()) return val;
-                            } catch(e) {}
+                            try { const v = ace.edit(ed).getValue(); if (v && v.trim()) return v; } catch(e) {}
                         }
                     }
-                    const edEl = document.querySelector('.ace_editor');
-                    if (edEl && edEl.env && edEl.env.editor)
-                        return edEl.env.editor.getValue();
                     return null;
                 }
             """)
 
             if not raw or not raw.strip():
-                await page.evaluate("""
-                    () => {
-                        const s = document.querySelector('.ace_scroller');
-                        if (s) s.scrollTop = s.scrollHeight;
-                    }
-                """)
+                await page.evaluate("() => { const s = document.querySelector('.ace_scroller'); if (s) s.scrollTop = s.scrollHeight; }")
                 await page.wait_for_timeout(800)
                 lines = await page.query_selector_all("div.ace_line")
                 raw   = "\n".join([(await l.text_content() or "").strip() for l in lines])
@@ -209,52 +184,6 @@ async def extract_raw(page, url: str) -> str:
 
     return ""
 
-async def ensure_logged_in(playwright):
-    """Login to Pasteview once and reuse the browser context."""
-    global browser_context, session_valid
-
-    if browser_context and session_valid:
-        return browser_context
-
-    log.info("Logging in to Pasteview...")
-    browser = await playwright.chromium.launch(
-        headless=True,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
-    context = await browser.new_context()
-    page    = await context.new_page()
-
-    try:
-        await page.goto("https://profilable.com/login?redirect=pasteview", wait_until="networkidle", timeout=30000)
-        await page.wait_for_timeout(1500)
-
-        # Fill login form
-        await page.fill('input[name="username"], input[type="text"]', PASTEVIEW_USERNAME)
-        await page.fill('input[type="password"], input[name="password"]', PASTEVIEW_PASSWORD)
-        await page.click('button[type="submit"]')
-        await page.wait_for_timeout(5000)  # wait for Cloudflare verification
-
-        # Check if login succeeded — profilable redirects back to pasteview on success
-        url = page.url
-        if "pasteview.com" in url:
-            session_valid   = True
-            browser_context = context
-            log.info("Logged in to Pasteview successfully")
-        else:
-            log.error("Pasteview login failed — check credentials")
-            session_valid = False
-            await browser.close()
-            return None
-
-    except Exception as e:
-        log.error(f"Login error: {e}")
-        session_valid = False
-        await browser.close()
-        return None
-
-    return context
-
-
 # ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def monitor_loop():
@@ -273,11 +202,11 @@ async def monitor_loop():
         log.info(f"Running scan #{stats['scans']}...")
 
         async with async_playwright() as p:
-            context = await ensure_logged_in(p)
-            if not context:
-                log.error("Could not log in, skipping scan")
-                return
-            page = await context.new_page()
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page()
 
             try:
                 # ── Step 1: load archive ───────────────────────────────────
@@ -344,8 +273,7 @@ async def monitor_loop():
                 for item in found:
                     if item["url"] in seen_this_run:
                         continue
-                    title_lower = item["title"].lower()
-                    if any(b in title_lower for b in BLACKLIST):
+                    if any(b in item["title"].lower() for b in BLACKLIST):
                         log.info(f"Skipping blacklisted paste: {item['title']}")
                         continue
                     seen_this_run.add(item["url"])
@@ -450,9 +378,9 @@ async def monitor_loop():
 
             except Exception as e:
                 log.error(f"Monitor loop error: {e}")
-                session_valid = False  # force re-login on next scan
+                stats["empty_scans"] += 1
             finally:
-                await page.close()
+                await browser.close()
 
 
 @monitor_loop.before_loop
@@ -470,9 +398,9 @@ async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCA
 
 @tree.command(name="stats", description="Show bot stats")
 async def cmd_stats(interaction: discord.Interaction):
-    uptime_secs          = int(time.time() - start_time)
-    hours, remainder     = divmod(uptime_secs, 3600)
-    minutes, seconds     = divmod(remainder, 60)
+    uptime_secs      = int(time.time() - start_time)
+    hours, remainder = divmod(uptime_secs, 3600)
+    minutes, seconds = divmod(remainder, 60)
     embed = discord.Embed(title="MERCURY // STATS", color=0xCC0000, timestamp=datetime.now(timezone.utc))
     embed.add_field(name="Uptime",       value=f"{hours}h {minutes}m {seconds}s", inline=True)
     embed.add_field(name="Scans Run",    value=str(stats["scans"]),               inline=True)
