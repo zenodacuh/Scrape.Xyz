@@ -20,5 +20,6 @@ RUN pip install --no-cache-dir discord.py playwright
 RUN playwright install chromium
 
 COPY mercury_bot.py .
+COPY mailhub.py .
 
 CMD ["python", "mercury_bot.py"]
