@@ -44,7 +44,7 @@ PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
 EMPTY_SCAN_ALERT = 10
-KEYWORDS         = ["hotmail", "hits", "mixed"]
+KEYWORDS         = ["hotmail", "hits", "mixed", "mix"]
 BLACKLIST        = ["omegle", "teens", "bro", "sis", "sister", "brother", "incest", "minor", "underage"]
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
