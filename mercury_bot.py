@@ -490,6 +490,19 @@ async def monitor_loop():
 async def before_monitor():
     await bot.wait_until_ready()
 
+
+@tasks.loop(seconds=60)
+async def watchdog():
+    """Restart monitor loop if it dies."""
+    if not monitor_loop.is_running():
+        log.warning("Monitor loop was dead, restarting...")
+        monitor_loop.start()
+
+
+@watchdog.before_loop
+async def before_watchdog():
+    await bot.wait_until_ready()
+
 # ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
 @tree.command(name="scrape", description="Manually trigger a scrape right now")
 @app_commands.describe(pages="Number of archive pages to scan (default: 5)")
@@ -554,6 +567,8 @@ async def on_ready():
         log.info(f"Monitor started — checking every {CHECK_INTERVAL}s")
     else:
         log.info("Monitor already running after reconnect")
+    if not watchdog.is_running():
+        watchdog.start()
 
 @bot.event
 async def on_resumed():
@@ -561,6 +576,8 @@ async def on_resumed():
     if not monitor_loop.is_running():
         monitor_loop.start()
         log.info("Monitor restarted after resume")
+    if not watchdog.is_running():
+        watchdog.start()
 
 # ─── RUN ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
