@@ -409,6 +409,9 @@ async def monitor_loop():
                         else:
                             log.info(f"No content extracted from {url}")
 
+                    sorted_zip = None
+                    valid_hits = []
+
                     if combined:
                         # Flatten all creds
                         all_raw = [l for b in combined for l in b.splitlines() if l.strip()]
@@ -447,12 +450,14 @@ async def monitor_loop():
                                 for combo in valid_hits:
                                     domain = combo.split(":", 1)[0].split("@")[-1].lower()
                                     domain_map.setdefault(domain, []).append(combo)
+                                log.info(f"Building ZIP with {len(domain_map)} domain(s): {list(domain_map.keys())}")
                                 zip_buf = io.BytesIO()
                                 with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                                     for domain, combos_d in domain_map.items():
                                         zf.writestr(f"{domain}.txt", "\n".join(combos_d))
                                 zip_buf.seek(0)
                                 sorted_zip = zip_buf
+                                log.info("ZIP built successfully")
                             else:
                                 sorted_zip = None
 
