@@ -532,7 +532,7 @@ async def monitor_loop():
                                     file_list = "\n".join(f"  • {fn}" for fn in private_post_count_ref["recent_filenames"])
                                     private_post_count_ref["recent_filenames"] = []
                                     pub_text = f"PRIVATE CLOUD UPDATED !\n\nFiles added:\n{file_list}\n\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
-                                    promo_path = os.path.join(os.path.dirname(__file__), "promo.png")
+                                    promo_path = os.path.join("/app", "promo.png")
                                     async with aiohttp.ClientSession() as sess:
                                         for pub_chat in [TELEGRAM_PUBLIC_CHAT, TELEGRAM_PUBLIC_CHAT2]:
                                             try:
@@ -542,11 +542,21 @@ async def monitor_loop():
                                                     form.add_field("caption", pub_text)
                                                     with open(promo_path, "rb") as img:
                                                         form.add_field("photo", img.read(), filename="promo.png", content_type="image/png")
-                                                    await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data=form)
+                                                    resp = await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data=form)
+                                                    body = await resp.json()
+                                                    if not body.get("ok"):
+                                                        log.error(f"Telegram sendPhoto failed: {body}")
+                                                    else:
+                                                        log.info(f"Posted public update with image to {pub_chat}")
                                                 else:
-                                                    await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                                    log.warning(f"promo.png not found at {promo_path}, sending text only")
+                                                    resp = await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
                                                         json={"chat_id": pub_chat, "text": pub_text})
-                                                log.info(f"Posted public update to {pub_chat}")
+                                                    body = await resp.json()
+                                                    if not body.get("ok"):
+                                                        log.error(f"Telegram sendMessage failed: {body}")
+                                                    else:
+                                                        log.info(f"Posted public update to {pub_chat}")
                                             except Exception as e:
                                                 log.error(f"Failed to post public update to {pub_chat}: {e}")
 
