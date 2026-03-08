@@ -640,6 +640,14 @@ async def on_ready():
         log.info(f"Synced {len(synced)} slash command(s)")
     except Exception as e:
         log.error(f"Failed to sync commands: {e}")
+
+    # Delete Telegram webhook so it doesnt process channel messages
+    try:
+        async with aiohttp.ClientSession() as sess:
+            await sess.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook?drop_pending_updates=true")
+            log.info("Telegram webhook cleared")
+    except Exception as e:
+        log.error(f"Failed to clear Telegram webhook: {e}")
     if not monitor_loop.is_running():
         monitor_loop.start()
         log.info(f"Monitor started — checking every {CHECK_INTERVAL}s")
