@@ -21,11 +21,11 @@ from mailhub import MailHub
 def load_proxies() -> list:
     path = os.path.join("/app", "proxies.txt")
     if not os.path.exists(path):
-        log.warning("proxies.txt not found, running proxyless")
+        print("proxies.txt not found, running proxyless")
         return []
     with open(path, "r") as f:
         proxies = [l.strip() for l in f if l.strip()]
-    log.info(f"Loaded {len(proxies)} proxies")
+    print(f"Loaded {len(proxies)} proxies")
     return proxies
 
 def get_proxy(proxies: list):
