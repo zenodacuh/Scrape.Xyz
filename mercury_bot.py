@@ -35,7 +35,8 @@ NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])
 CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"])
 TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]
-TELEGRAM_PUBLIC_CHAT = os.environ["TELEGRAM_PUBLIC_CHAT"]
+TELEGRAM_PUBLIC_CHAT  = os.environ["TELEGRAM_PUBLIC_CHAT"]
+TELEGRAM_PUBLIC_CHAT2 = os.environ["TELEGRAM_PUBLIC_CHAT2"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
 CHECK_INTERVAL   = 30
@@ -44,7 +45,7 @@ PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
 EMPTY_SCAN_ALERT = 10
-KEYWORDS         = ["hotmail", "hits", "mixed", "mix"]
+KEYWORDS         = ["hotmail", "hits", "mixed"]
 BLACKLIST        = ["omegle", "teens", "bro", "sis", "sister", "brother", "incest", "minor", "underage"]
 
 # ─── LOGGING ─────────────────────────────────────────────────────────────────
@@ -59,6 +60,8 @@ log = logging.getLogger("mercury")
 start_time = time.time()
 stats      = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
 scan_lock  = asyncio.Lock()
+
+private_post_count = 0  # counts private channel posts, public update every 10
 
 # ─── FEATURE TOGGLES ─────────────────────────────────────────────────────────
 toggles = {
@@ -518,13 +521,30 @@ async def monitor_loop():
                                 except Exception as e:
                                     log.error(f"Failed to post ZIP to Telegram: {e}")
 
-                            async with aiohttp.ClientSession() as sess:
-                                if toggles["telegram_public"]:
+                            if toggles["telegram_public"]:
+                                private_post_count_ref = globals()
+                                private_post_count_ref["private_post_count"] += 1
+                                log.info(f"Private post count: {private_post_count_ref['private_post_count']}")
+                                if private_post_count_ref["private_post_count"] >= 10:
+                                    private_post_count_ref["private_post_count"] = 0
                                     pub_text = f"PRIVATE CLOUD UPDATED !\n-File name: {filename}\n-Lines: {len(all_creds)}\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
-                                    await sess.post(
-                                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                                        json={"chat_id": TELEGRAM_PUBLIC_CHAT, "text": pub_text}
-                                    )
+                                    promo_path = os.path.join(os.path.dirname(__file__), "promo.png")
+                                    async with aiohttp.ClientSession() as sess:
+                                        for pub_chat in [TELEGRAM_PUBLIC_CHAT, TELEGRAM_PUBLIC_CHAT2]:
+                                            try:
+                                                if os.path.exists(promo_path):
+                                                    form = aiohttp.FormData()
+                                                    form.add_field("chat_id", pub_chat)
+                                                    form.add_field("caption", pub_text)
+                                                    with open(promo_path, "rb") as img:
+                                                        form.add_field("photo", img.read(), filename="promo.png", content_type="image/png")
+                                                    await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data=form)
+                                                else:
+                                                    await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                                        json={"chat_id": pub_chat, "text": pub_text})
+                                                log.info(f"Posted public update to {pub_chat}")
+                                            except Exception as e:
+                                                log.error(f"Failed to post public update to {pub_chat}: {e}")
 
 
                     else:
