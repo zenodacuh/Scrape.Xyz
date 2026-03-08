@@ -495,7 +495,7 @@ async def monitor_loop():
                                 private_post_count_ref["private_post_count"] += 1
                                 private_post_count_ref["recent_filenames"].append(filename)
                                 log.info(f"Private post count: {private_post_count_ref['private_post_count']}")
-                                if private_post_count_ref["private_post_count"] >= 10:
+                                if private_post_count_ref["private_post_count"] >= 2:
                                     private_post_count_ref["private_post_count"] = 0
                                     file_list = "\n".join(f"  • {fn}" for fn in private_post_count_ref["recent_filenames"])
                                     private_post_count_ref["recent_filenames"] = []
