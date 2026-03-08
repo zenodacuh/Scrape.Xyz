@@ -62,6 +62,7 @@ stats      = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0
 scan_lock  = asyncio.Lock()
 
 private_post_count = 0  # counts private channel posts, public update every 10
+recent_filenames   = []  # tracks last 10 posted filenames for public update
 
 # ─── FEATURE TOGGLES ─────────────────────────────────────────────────────────
 toggles = {
@@ -524,10 +525,13 @@ async def monitor_loop():
                             if toggles["telegram_public"]:
                                 private_post_count_ref = globals()
                                 private_post_count_ref["private_post_count"] += 1
+                                private_post_count_ref["recent_filenames"].append(filename)
                                 log.info(f"Private post count: {private_post_count_ref['private_post_count']}")
                                 if private_post_count_ref["private_post_count"] >= 10:
                                     private_post_count_ref["private_post_count"] = 0
-                                    pub_text = f"PRIVATE CLOUD UPDATED !\n-File name: {filename}\n-Lines: {len(all_creds)}\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
+                                    file_list = "\n".join(f"  • {fn}" for fn in private_post_count_ref["recent_filenames"])
+                                    private_post_count_ref["recent_filenames"] = []
+                                    pub_text = f"PRIVATE CLOUD UPDATED !\n\nFiles added:\n{file_list}\n\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
                                     promo_path = os.path.join(os.path.dirname(__file__), "promo.png")
                                     async with aiohttp.ClientSession() as sess:
                                         for pub_chat in [TELEGRAM_PUBLIC_CHAT, TELEGRAM_PUBLIC_CHAT2]:
